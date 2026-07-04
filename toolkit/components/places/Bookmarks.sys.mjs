@@ -228,6 +228,9 @@ export var Bookmarks = Object.freeze({
    * @throws If the arguments are invalid.
    */
   insert(info) {
+    // DenBrowser: bookmarks are read-only — user creation/editing/removal is
+    // disabled (patch 019); shortcuts live on the custom new-tab page instead.
+    return Promise.reject(new Error("DenBrowser: bookmarks are disabled."));
     let now = new Date();
     let addedTime = (info && info.dateAdded) || now;
     let modTime = addedTime;
@@ -382,6 +385,8 @@ export var Bookmarks = Object.freeze({
    * @throws if the arguments are invalid.
    */
   insertTree(tree, options) {
+    // DenBrowser: bookmarks are read-only (patch 019).
+    return Promise.reject(new Error("DenBrowser: bookmarks are disabled."));
     if (!tree || typeof tree != "object") {
       throw new Error("Should be provided a valid tree object.");
     }
@@ -685,6 +690,8 @@ export var Bookmarks = Object.freeze({
    * @throws If the arguments are invalid.
    */
   update(info) {
+    // DenBrowser: bookmarks are read-only (patch 019).
+    return Promise.reject(new Error("DenBrowser: bookmarks are disabled."));
     // The info object is first validated here to ensure it's consistent, then
     // it's compared to the existing item to remove any properties that don't
     // need to be updated.
@@ -1014,6 +1021,8 @@ export var Bookmarks = Object.freeze({
    * @throws If the arguments are invalid.
    */
   moveToFolder(guids, parentGuid, index, source) {
+    // DenBrowser: bookmarks are read-only (patch 019).
+    return Promise.reject(new Error("DenBrowser: bookmarks are disabled."));
     if (!Array.isArray(guids) || guids.length < 1) {
       throw new Error("guids should be an array of at least one item");
     }
@@ -1263,6 +1272,8 @@ export var Bookmarks = Object.freeze({
    * @throws if the arguments are invalid.
    */
   remove(guidOrInfo, options = {}) {
+    // DenBrowser: bookmarks are read-only (patch 019).
+    return Promise.reject(new Error("DenBrowser: bookmarks are disabled."));
     let infos = guidOrInfo;
     if (!infos) {
       throw new Error("Input should be a valid object");
@@ -1383,6 +1394,8 @@ export var Bookmarks = Object.freeze({
    * @returns {Promise<void>} Resolved when the removal is complete.
    */
   eraseEverything(options = {}) {
+    // DenBrowser: bookmarks are read-only (patch 019).
+    return Promise.reject(new Error("DenBrowser: bookmarks are disabled."));
     if (!options.source) {
       options.source = Bookmarks.SOURCES.DEFAULT;
     }
@@ -1755,6 +1768,8 @@ export var Bookmarks = Object.freeze({
    * @throws if the arguments are invalid.
    */
   reorder(parentGuid, orderedChildrenGuids, options = {}) {
+    // DenBrowser: bookmarks are read-only (patch 019).
+    return Promise.reject(new Error("DenBrowser: bookmarks are disabled."));
     let info = { guid: parentGuid };
     info = validateBookmarkObject("Bookmarks.sys.mjs: reorder", info, {
       guid: { required: true },
