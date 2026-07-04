@@ -6886,11 +6886,12 @@ nsresult nsCocoaWindow::SetTitle(const nsAString& aTitle) {
     return NS_OK;
   }
 
-  const nsString& strTitle = PromiseFlatString(aTitle);
-  const unichar* uniTitle = reinterpret_cast<const unichar*>(strTitle.get());
-  NSString* title = [NSString stringWithCharacters:uniTitle
-                                            length:strTitle.Length()];
-  if (mWindow.drawsContentsIntoWindowFrame) {
+  // DenBrowser: ignore the page-supplied title and force a constant.  The
+  // window title is exposed to any user-level process on the host via OS
+  // window-list APIs (CGWindowListCopyWindowInfo) without any permission
+  // prompt — see patch 016 header for the full rationale.
+  NSString* title = @"DenBrowser";
+  if (mWindow.drawsContentsIntoWindowFrame && !mWindow.wantsTitleDrawn) {
     // Don't cause invalidations when the title isn't displayed.
     [mWindow disableSetNeedsDisplay];
     [mWindow setTitle:title];
