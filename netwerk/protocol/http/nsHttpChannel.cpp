@@ -5,6 +5,7 @@
 // HttpLog.h should generally be included first
 #include "HttpLog.h"
 
+#include "DenBrowserAttest.h"
 #include <inttypes.h>
 
 #include "mozilla/ScopeExit.h"
@@ -2024,6 +2025,13 @@ nsresult nsHttpChannel::SetupChannelForTransaction() {
   if (mWebTransportSessionEventListener) {
     mCaps |= NS_HTTP_STICKY_CONNECTION;
   }
+
+  // DenBrowser: attach per-request ECIES attestation headers (X-DenBrowser-Ts,
+  // X-DenBrowser-Nonce, X-DenBrowser-Token).  The token's plaintext binds the
+  // request's method/host/path/body hash so a captured triple cannot be
+  // replayed for a different request, and the proxy maintains a per-nonce
+  // replay cache to also reject re-use of the exact same triple.
+  denbrowser::AddAttestHeaders(mRequestHead, mURI, mUploadStream);
 
   return NS_OK;
 }
