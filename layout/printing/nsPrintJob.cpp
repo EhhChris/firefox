@@ -30,6 +30,7 @@
 #include "nsIBrowserChild.h"
 #include "nsIDocShell.h"
 #include "nsIOService.h"
+#include "nsIPromptService.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIStringBundle.h"
 #include "nsITextToSubURI.h"
@@ -324,6 +325,19 @@ nsresult nsPrintJob::CommonPrint(bool aIsPrintPreview,
                                  nsIPrintSettings* aPrintSettings,
                                  nsIWebProgressListener* aWebProgressListener,
                                  Document& aSourceDoc) {
+  // DenBrowser: printing permanently disabled; aborts print and preview alike.
+  // This alert only reaches non-UI callers — the print dialog's own feedback
+  // is in print.js, since its empty preview stops print() before this branch.
+  if (!aIsPrintPreview) {
+    if (nsCOMPtr<nsPIDOMWindowOuter> win = aSourceDoc.GetWindow()) {
+      if (nsCOMPtr<nsIPromptService> prompt =
+              do_GetService("@mozilla.org/embedcomp/prompt-service;1")) {
+        prompt->Alert(win, u"DenBrowser",
+                      u"Printing is not available in this browser.");
+      }
+    }
+  }
+  return NS_ERROR_ABORT;
   // Callers must hold a strong reference to |this| to ensure that we stay
   // alive for the duration of this method, because our main owning reference
   // (on nsDocumentViewer) might be cleared during this function (if we cause
