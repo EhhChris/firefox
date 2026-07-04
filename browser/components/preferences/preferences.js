@@ -540,21 +540,14 @@ function init_all() {
       );
   }
 
-  // The Sync category needs to be the last of the "real" categories
-  // registered and initialized since many tests wait for the
-  // "sync-pane-loaded" observer notification before starting the test.
-  let accountsEnabled = Services.prefs.getBoolPref(
-    "identity.fxaccounts.enabled"
-  );
-  let categorySync = document.getElementById("category-sync");
-  if (redesignEnabled) {
-    categorySync.setAttribute("data-l10n-id", "pane-account-sync-title2");
-    categorySync.iconSrc = "chrome://browser/skin/fxa/avatar-empty.svg";
-    categorySync.hidden = false;
-  } else if (accountsEnabled) {
-    categorySync.hidden = false;
-    register_module("paneSync", gSyncPane);
+  NimbusFeatures.moreFromMozilla.recordExposureEvent({ once: true });
+  if (NimbusFeatures.moreFromMozilla.getVariable("enabled")) {
+    document.getElementById("category-more-from-mozilla").hidden = false;
+    gMoreFromMozillaPane.option =
+      NimbusFeatures.moreFromMozilla.getVariable("template");
+    register_module("paneMoreFromMozilla", gMoreFromMozillaPane);
   }
+  // DenBrowser: Sync UI permanently removed.
   register_module("paneSearchResults", gSearchResultsPane);
   for (let [id, config] of Object.entries(CONFIG_PANES)) {
     if (!redesignEnabled && config.replaces) {
