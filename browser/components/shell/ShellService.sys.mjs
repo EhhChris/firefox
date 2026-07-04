@@ -55,6 +55,7 @@ let ShellServiceInternal = {
    * environments.
    */
   get canSetDesktopBackground() {
+    return false; // DenBrowser: writing files to disk is not permitted.
     if (AppConstants.platform == "win" || AppConstants.platform == "macosx") {
       return true;
     }
