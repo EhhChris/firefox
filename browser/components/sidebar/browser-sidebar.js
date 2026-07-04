@@ -116,24 +116,6 @@ var SidebarController = {
         }),
       ],
       [
-        "viewTabsSidebar",
-        this.makeSidebar({
-          elementId: "sidebar-switcher-tabs",
-          url: this.sidebarRevampEnabled
-            ? "chrome://browser/content/sidebar/sidebar-syncedtabs.html"
-            : "chrome://browser/content/syncedtabs/sidebar.xhtml",
-          menuId: "menu_tabsSidebar",
-          classAttribute: "sync-ui-item",
-          menuL10nId: "menu-view-synced-tabs-sidebar",
-          revampL10nId: "sidebar-menu-synced-tabs-label",
-          iconUrl: "chrome://browser/skin/synced-tabs.svg",
-          contextMenuId: this.sidebarRevampEnabled
-            ? "sidebar-synced-tabs-context-menu"
-            : undefined,
-          gleanClickEvent: Glean.sidebar.syncedTabsIconClick,
-        }),
-      ],
-      [
         "viewBookmarksSidebar",
         this.makeSidebar({
           elementId: "sidebar-switcher-bookmarks",
