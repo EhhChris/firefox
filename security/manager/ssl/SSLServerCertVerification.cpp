@@ -103,6 +103,7 @@
 #include "ScopedNSSTypes.h"
 #include "SharedCertVerifier.h"
 #include "VerifySSLServerCertChild.h"
+#include "DenBrowserAttest.h"  // denbrowser::VerifyProxyPin
 #include "cert.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Casting.h"
@@ -956,6 +957,24 @@ SECStatus AuthCertificateHook(void* arg, PRFileDesc* fd, PRBool checkSig,
 
   nsTArray<nsTArray<uint8_t>> peerCertsBytes =
       CreateCertBytesArray(peerCertChain);
+
+  // ── DenBrowser proxy SPKI pin ──────────────────────────────────────────────
+  // Reject the handshake before any application data flows if the
+  // hostname matches our configured attestation-proxy host AND the leaf
+  // cert's SPKI does not match the build-time pin.  Inert for any other
+  // host and for unconfigured builds (kProxyHost empty / hash all-zero).
+  // Prevents a co-resident attacker on this machine from MitMing the
+  // proxy hop and harvesting X-DenBrowser-* attestation headers in cleartext.
+  if (!peerCertsBytes.IsEmpty() &&
+      !denbrowser::VerifyProxyPin(
+          socketInfo->GetHostName(),
+          mozilla::Span<const uint8_t>(peerCertsBytes[0]))) {
+    MOZ_LOG(gPIPNSSLog, LogLevel::Error,
+            ("[%p] DenBrowser proxy pin failed; aborting handshake\n", fd));
+    PR_SetError(SSL_ERROR_BAD_CERTIFICATE, 0);
+    return SECFailure;
+  }
+  // ────────────────────────────────────────────────────────────────────────
 
   // SSL_PeerStapledOCSPResponses will never return a non-empty response if
   // OCSP stapling wasn't enabled because libssl wouldn't have let the server

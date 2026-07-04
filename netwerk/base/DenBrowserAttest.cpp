@@ -26,6 +26,8 @@
 
 #include "DenBrowserAttest.h"
 
+#include "cert.h"
+#include "certt.h"
 #include "keyhi.h"
 #include "mozilla/Base64.h"
 #include "mozilla/Logging.h"
@@ -45,6 +47,8 @@
 #include "ScopedNSSTypes.h"
 #include "secasn1.h"
 #include "secitem.h"
+
+#include <cstring>
 
 namespace denbrowser {
 
@@ -94,6 +98,25 @@ static constexpr uint32_t kProxyPublicKeyDerLen =
 // Valid P-256 SPKI DER starts with 0x30 (ASN.1 SEQUENCE).
 // An all-zero buffer is the placeholder; treat as "not configured".
 static bool KeyIsPlaceholder() { return kProxyPublicKeyDer[0] != 0x30; }
+
+// ── TLS-channel pin for the proxy ────────────────────────────────────────────
+//
+// The browser will refuse to complete a TLS handshake to `kProxyHost` unless
+// the leaf cert's SubjectPublicKeyInfo sha256 matches `kProxySpkiSha256`.
+// This shuts off the local-sniffer threat: a co-resident attacker on this
+// machine sees only TLS ciphertext between the browser and the proxy, and
+// can't impersonate the proxy with a different cert (no rogue CA install,
+// no MitM stack, etc.).
+//
+// Defaults below are the unconfigured placeholders.  Running
+// scripts/gen-proxy-tls.sh patches in the real values and the pin becomes
+// active on the next build.  An empty host or all-zero hash means
+// "no pin configured" — VerifyProxyPin returns true and behaves as a no-op.
+
+// ── REPLACE TLS PIN: gen-proxy-tls.sh updates these ─────────────────────
+static const char kProxyHost[] = "";
+static const uint8_t kProxySpkiSha256[32] = { 0 };
+// ── END REPLACE TLS PIN ──────────────────────────────────────────────────
 
 // ── P-256 curve params for ephemeral keygen ───────────────────────────────────
 // DER encoding of OID prime256v1 (1.2.840.10045.3.1.7):
@@ -361,6 +384,68 @@ nsresult AddAttestHeaders(mozilla::net::nsHttpRequestHead& aHead, nsIURI* aURI,
   mozilla::Unused << aHead.SetHeader("X-DenBrowser-Token"_ns, tokenB64, false);
 
   return NS_OK;
+}
+
+// ── Proxy SPKI pin verification ──────────────────────────────────────────────
+
+static bool PinIsConfigured() {
+  if (kProxyHost[0] == '\0') return false;
+  for (uint8_t b : kProxySpkiSha256) {
+    if (b != 0) return true;
+  }
+  return false;
+}
+
+// Returns NS_OK and writes 32 bytes of sha256(SubjectPublicKeyInfo) into
+// aOut, given the DER bytes of an X.509 certificate.
+static nsresult Sha256OfLeafSpki(mozilla::Span<const uint8_t> aCertDer,
+                                 uint8_t aOut[32]) {
+  if (aCertDer.IsEmpty()) return NS_ERROR_INVALID_ARG;
+
+  SECItem certItem = {siBuffer,
+                      const_cast<uint8_t*>(aCertDer.Elements()),
+                      static_cast<unsigned int>(aCertDer.Length())};
+  mozilla::UniqueCERTCertificate cert(
+      CERT_DecodeDERCertificate(&certItem, PR_FALSE, nullptr));
+  if (!cert) return NS_ERROR_FAILURE;
+
+  // Re-encode the parsed SubjectPublicKeyInfo to be sure we hash the full
+  // SPKI (algorithm identifier + BIT STRING) per RFC 7469, not just the
+  // raw public-key octets.
+  SECItem* spkiDer = SEC_ASN1EncodeItem(
+      nullptr, nullptr, &cert->subjectPublicKeyInfo,
+      SEC_ASN1_GET(CERT_SubjectPublicKeyInfoTemplate));
+  if (!spkiDer) return NS_ERROR_FAILURE;
+
+  SECStatus rv =
+      PK11_HashBuf(SEC_OID_SHA256, aOut, spkiDer->data, spkiDer->len);
+  SECITEM_FreeItem(spkiDer, PR_TRUE);
+  return (rv == SECSuccess) ? NS_OK : NS_ERROR_FAILURE;
+}
+
+bool VerifyProxyPin(const nsACString& aHost,
+                    mozilla::Span<const uint8_t> aLeafCertDer) {
+  // Unconfigured build → pin is inert, every host passes.
+  if (!PinIsConfigured()) return true;
+
+  // Pin applies only to the proxy hop; everything else is unaffected.
+  if (!aHost.EqualsASCII(kProxyHost)) return true;
+
+  uint8_t hash[32];
+  if (NS_FAILED(Sha256OfLeafSpki(aLeafCertDer, hash))) {
+    MOZ_LOG(sLog, mozilla::LogLevel::Error,
+            ("DenBrowserAttest: SPKI hashing failed for host=%s — pin REJECT.",
+             nsPromiseFlatCString(aHost).get()));
+    return false;  // fail-closed
+  }
+
+  if (std::memcmp(hash, kProxySpkiSha256, sizeof(hash)) != 0) {
+    MOZ_LOG(sLog, mozilla::LogLevel::Error,
+            ("DenBrowserAttest: SPKI pin MISMATCH for host=%s — aborting TLS.",
+             nsPromiseFlatCString(aHost).get()));
+    return false;
+  }
+  return true;
 }
 
 }  // namespace denbrowser
