@@ -14,6 +14,12 @@ ChromeUtils.defineESModuleGetters(lazy, {
 });
 
 const ABOUT_URL = "about:newtab";
+// DenBrowser: new tabs load our static shortcuts page instead of about:newtab.
+// about:newtab is rendered by the activity-stream built-in add-on, whose
+// background script never runs in this hardened, permanent-private-browsing
+// build, leaving new tabs blank. about:denbrowserhome is a plain chrome about:
+// page served by the C++ AboutRedirector — see patch 018.
+const DENBROWSER_NEWTAB_URL = "about:denbrowserhome";
 const PREF_ACTIVITY_STREAM_DEBUG = "browser.newtabpage.activity-stream.debug";
 // AboutHomeStartupCache needs us in "quit-application", so stay alive longer.
 // TODO: We could better have a shared async shutdown blocker?
@@ -112,7 +118,10 @@ export const AboutNewTab = {
   },
 
   get newTabURL() {
-    return this._newTabURL;
+    // DenBrowser: always route new tabs to our shortcuts page. Returning a
+    // constant (rather than this._newTabURL) keeps the stock activity-stream
+    // toggling and override machinery inert — see DENBROWSER_NEWTAB_URL above.
+    return DENBROWSER_NEWTAB_URL;
   },
 
   set newTabURL(aNewTabURL) {
