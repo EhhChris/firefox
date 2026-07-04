@@ -353,7 +353,7 @@ export class DevToolsStartup {
   profilerRecordingButtonCreated = false;
 
   isDisabledByPolicy() {
-    return Services.prefs.getBoolPref(DEVTOOLS_POLICY_DISABLED_PREF, false);
+    return true; // DenBrowser: developer tools permanently disabled.
   }
 
   handle(cmdLine) {
@@ -706,6 +706,9 @@ export class DevToolsStartup {
   }
 
   onMoreToolsViewShowing(moreToolsView) {
+    if (this.isDisabledByPolicy()) {
+      return; // DenBrowser: developer tools permanently disabled.
+    }
     this.addDevToolsItemsToSubview(moreToolsView);
   }
 

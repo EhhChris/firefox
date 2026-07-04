@@ -66,7 +66,7 @@ export const DevToolsShim = {
    * @returns {boolean}
    */
   isDisabledByPolicy() {
-    return Services.prefs.getBoolPref(DEVTOOLS_POLICY_DISABLED_PREF, false);
+    return true; // DenBrowser: developer tools permanently disabled.
   },
 
   /**
