@@ -323,6 +323,9 @@ void Clipboard::RequestRead(Promise* aPromise, ReadRequestType aType,
 already_AddRefed<Promise> Clipboard::ReadHelper(nsIPrincipal& aSubjectPrincipal,
                                                 ReadRequestType aType,
                                                 ErrorResult& aRv) {
+  // DenBrowser: clipboard read access disabled.
+  aRv.ThrowNotAllowedError("DenBrowser policy: clipboard access is disabled.");
+  return nullptr;
   // Create a new promise
   nsGlobalWindowInner* owner = GetOwnerWindow();
   RefPtr<Promise> p = dom::Promise::Create(owner, aRv);
@@ -673,6 +676,9 @@ NS_IMPL_ISUPPORTS(ClipboardWriteCallback, nsIAsyncClipboardRequestCallback)
 already_AddRefed<Promise> Clipboard::Write(
     const Sequence<OwningNonNull<ClipboardItem>>& aData,
     nsIPrincipal& aSubjectPrincipal, ErrorResult& aRv) {
+  // DenBrowser: clipboard write access disabled.
+  aRv.ThrowNotAllowedError("DenBrowser policy: clipboard access is disabled.");
+  return nullptr;
   // Create a promise
   RefPtr<nsGlobalWindowInner> owner = GetOwnerWindow();
   RefPtr<Promise> p = dom::Promise::Create(owner, aRv);

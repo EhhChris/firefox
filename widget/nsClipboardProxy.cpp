@@ -18,6 +18,9 @@
 #include "nsArrayUtils.h"
 #include "nsBaseClipboard.h"
 #include "nsIContentAnalysis.h"
+// DenBrowser: gDenServePasteFromInternal is defined in nsCopySupport.cpp (same
+// content-process binary); externs here so nsClipboardProxy can read it.
+extern bool gDenServePasteFromInternal;
 #include "nsISupportsPrimitives.h"
 #include "nsCOMPtr.h"
 #include "nsComponentManagerUtils.h"
@@ -68,6 +71,33 @@ NS_IMETHODIMP
 nsClipboardProxy::GetData(nsITransferable* aTransferable,
                           nsIClipboard::ClipboardType aWhichClipboard,
                           mozilla::dom::WindowContext* aWindowContext) {
+  // DenBrowser: serve from parent-process internal clipboard if a listed site
+  // is pasting.  Data lives in ContentParent so it is accessible cross-process
+  // (Fission puts each site in its own content process).
+  // Do NOT clear gDenServePasteFromInternal here — the editor may call both
+  // GetData and GetDataSnapshotSync during the same paste operation.
+  if (gDenServePasteFromInternal) {
+    nsString denText;
+    bool denHasData = false;
+    ContentChild::GetSingleton()->SendGetDenInternalClipboard(&denText,
+                                                              &denHasData);
+    if (denHasData) {
+      nsCOMPtr<nsISupportsString> str =
+          do_CreateInstance("@mozilla.org/supports-string;1");
+      if (str) {
+        str->SetData(denText);
+        // Set data for every flavor the transferable accepts so the editor
+        // finds a match regardless of which flavor it prioritises.
+        nsTArray<nsCString> flavors;
+        aTransferable->FlavorsTransferableCanImport(flavors);
+        for (const auto& flavor : flavors) {
+          aTransferable->SetTransferData(flavor.get(), str);
+        }
+        return NS_OK;
+      }
+    }
+    // Parent has no internal data — fall through to OS clipboard IPC.
+  }
   MOZ_DIAGNOSTIC_ASSERT(aWindowContext && aWindowContext->IsInProcess(),
                         "content clipboard reads must be associated with an "
                         "in-process WindowContext");
@@ -405,6 +435,51 @@ NS_IMETHODIMP nsClipboardProxy::GetDataSnapshotSync(
     mozilla::dom::WindowContext* aRequestingWindowContext,
     nsIClipboardDataSnapshot** _retval) {
   *_retval = nullptr;
+
+  // DenBrowser: serve from parent-process internal clipboard if a listed site
+  // is pasting.  Data lives in ContentParent so it is accessible cross-process
+  // (Fission puts each site in its own content process).
+  // Placed before the aFlavorList.IsEmpty() check so we can return early.
+  // Do NOT clear gDenServePasteFromInternal — both GetDataSnapshotSync and
+  // GetData may be called during the same paste event (JS clipboardData read
+  // + editor default paste); both need to see the flag.
+  // Populate the snapshot transferable with every flavor in aFlavorList so
+  // ClipboardPopulatedDataSnapshot::GetDataSync's strict "all flavors must be
+  // present" check always passes.
+  if (gDenServePasteFromInternal) {
+    nsString denText;
+    bool denHasData = false;
+    ContentChild::GetSingleton()->SendGetDenInternalClipboard(&denText,
+                                                              &denHasData);
+    if (denHasData) {
+      nsresult rv;
+      nsCOMPtr<nsITransferable> trans =
+          do_CreateInstance("@mozilla.org/widget/transferable;1", &rv);
+      if (NS_SUCCEEDED(rv) && trans) {
+        trans->Init(nullptr);
+        nsCOMPtr<nsISupportsString> str =
+            do_CreateInstance("@mozilla.org/supports-string;1");
+        if (str) {
+          str->SetData(denText);
+          // AddDataFlavor must be called before SetTransferData so that
+          // FlavorsTransferableCanExport (used by ClipboardPopulatedDataSnapshot
+          // constructor to build mFlavors) includes each flavor.  Without
+          // AddDataFlavor, mFlavors is empty and GetDataSync always returns
+          // NS_ERROR_FAILURE regardless of what the editor requests.
+          for (const auto& flavor : aFlavorList) {
+            trans->AddDataFlavor(flavor.get());
+            trans->SetTransferData(flavor.get(), str);
+          }
+        }
+        auto snapshot =
+            mozilla::MakeRefPtr<nsBaseClipboard::ClipboardPopulatedDataSnapshot>(
+                trans);
+        snapshot.forget(_retval);
+        return NS_OK;
+      }
+    }
+    // Parent has no internal data — fall through to OS clipboard IPC.
+  }
 
   if (aFlavorList.IsEmpty()) {
     return NS_ERROR_INVALID_ARG;

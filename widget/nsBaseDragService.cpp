@@ -310,6 +310,8 @@ nsresult nsBaseDragSession::InvokeDragSession(
 
   // stash the document of the dom node
   mSourceDocument = aDOMNode->OwnerDoc();
+  // DenBrowser: block all drag-and-drop to prevent text exfiltration (incl. URL bar).
+  return NS_ERROR_ABORT;
   mTriggeringPrincipal = aPrincipal;
   mPolicyContainer = aPolicyContainer;
   mSourceNode = aDOMNode;

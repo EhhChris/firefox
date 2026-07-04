@@ -1015,6 +1015,11 @@ class ContentParent final : public PContentParent,
       nsTArray<nsCString>&& aTypes,
       const nsIClipboard::ClipboardType& aWhichClipboard, bool* aHasType);
 
+  // DenBrowser cross-process internal clipboard.
+  mozilla::ipc::IPCResult RecvSetDenInternalClipboard(const nsString& aText);
+  mozilla::ipc::IPCResult RecvGetDenInternalClipboard(nsString* aText,
+                                                       bool* aHasData);
+
   mozilla::ipc::IPCResult RecvGetClipboardDataSnapshot(
       nsTArray<nsCString>&& aTypes,
       const nsIClipboard::ClipboardType& aWhichClipboard,

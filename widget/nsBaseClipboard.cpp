@@ -391,8 +391,14 @@ NS_IMETHODIMP nsBaseClipboard::SetData(
     // Reject existing pending asyncSetData request if any.
     RejectPendingAsyncSetDataRequestIfAny(aWhichClipboard);
     SanitizeForClipboard(aTransferable);
-    rv = SetNativeClipboardData(aTransferable, aWhichClipboard);
     mIgnoreEmptyNotification = false;
+    // DenBrowser: suppress OS write AND skip the cache Update() below.
+    // Otherwise the in-memory ClipboardCache exposes listed-site text to
+    // non-listed sites via nsBaseClipboard::GetData's cached-data path
+    // (widget.clipboard.use-cached-data.enabled defaults true on macOS).
+    // Listed-site paste reads gDenParentClipText (set in RecvSetClipboard),
+    // not this cache, so the early return is safe.
+    return NS_OK;
   }
   if (NS_FAILED(rv)) {
     MOZ_CLIPBOARD_LOG("%s: setting native clipboard data failed.",
