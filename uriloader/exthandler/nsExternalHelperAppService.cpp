@@ -86,6 +86,7 @@
 
 #include "nsIStringBundle.h"  // XXX needed to localize error msgs
 #include "nsIPrompt.h"
+#include "nsIPromptService.h"
 
 #include "nsITextToSubURI.h"  // to unescape the filename
 
@@ -772,6 +773,14 @@ NS_IMETHODIMP nsExternalHelperAppService::CreateListener(
   MOZ_ASSERT(!XRE_IsContentProcess());
   NS_ENSURE_ARG_POINTER(aChannel);
 
+  // DenBrowser: file downloads unconditionally blocked.
+  if (nsCOMPtr<nsIPromptService> prompt =
+          do_GetService("@mozilla.org/embedcomp/prompt-service;1")) {
+    prompt->Alert(nullptr, u"DenBrowser",
+                  u"Saving files is not available in this browser.");
+  }
+  aChannel->Cancel(NS_ERROR_ABORT);
+  return NS_ERROR_ABORT;
   nsAutoString fileName;
   nsAutoCString fileExtension;
   nsIHelperAppLauncherDialog::reason reason =

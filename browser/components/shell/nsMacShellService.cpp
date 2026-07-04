@@ -101,6 +101,8 @@ nsMacShellService::SetDefaultBrowser(bool aForAllUsers) {
 NS_IMETHODIMP
 nsMacShellService::SetDesktopBackground(Element* aElement, int32_t aPosition,
                                         const nsACString& aImageName) {
+  // DenBrowser: writing files to disk is not permitted.
+  return NS_ERROR_ABORT;
   // Note: We don't support aPosition on OS X.
 
   // Get the image URI:
