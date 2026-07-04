@@ -3579,17 +3579,10 @@ nsresult nsWindow::SetTitle(const nsAString& aTitle) {
     return NS_OK;
   }
 
-  // convert the string into utf8 and set the title.
-#define UTF8_FOLLOWBYTE(ch) (((ch) & 0xC0) == 0x80)
-  NS_ConvertUTF16toUTF8 titleUTF8(aTitle);
-  if (titleUTF8.Length() > NS_WINDOW_TITLE_MAX_LENGTH) {
-    // Truncate overlong titles (bug 167315). Make sure we chop after a
-    // complete sequence by making sure the next char isn't a follow-byte.
-    uint32_t len = NS_WINDOW_TITLE_MAX_LENGTH;
-    while (UTF8_FOLLOWBYTE(titleUTF8[len])) --len;
-    titleUTF8.Truncate(len);
-  }
-  gtk_window_set_title(GTK_WINDOW(mShell), (const char*)titleUTF8.get());
+  // DenBrowser: ignore the page-supplied title.  See widget/cocoa/nsCocoaWindow.mm
+  // SetTitle() for the rationale (window-title leak via _NET_WM_NAME / wmctrl /
+  // xdg_toplevel::set_title on Wayland).
+  gtk_window_set_title(GTK_WINDOW(mShell), "DenBrowser");
 
   return NS_OK;
 }
