@@ -724,6 +724,8 @@ var gInitialPages = [
   "about:firefoxview",
   "about:newtab",
   "about:opentabs",
+  // DenBrowser: our custom new-tab page is an initial page like about:newtab.
+  "about:denbrowserhome",
   "about:privatebrowsing",
   "about:sessionrestore",
   "about:welcome",
