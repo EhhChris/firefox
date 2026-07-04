@@ -1242,6 +1242,14 @@ parent:
     sync ClipboardHasType(nsCString[] aTypes, ClipboardType aWhichClipboard)
         returns (bool hasType);
 
+    // DenBrowser: cross-process internal clipboard (listed sites only).
+    // Both messages are sync: SetDenInternalClipboard must be sync to avoid a
+    // race where an async SET from the copy-side process hasn't reached the
+    // parent before a sync GET fires from the paste-side process.
+    sync SetDenInternalClipboard(nsString aText);
+    sync GetDenInternalClipboard()
+        returns (nsString aText, bool aHasData);
+
     /**
      * Notify the parent that the child has started a clipboard write request,
      * and that the data will be sent over another IPC message once it is ready.

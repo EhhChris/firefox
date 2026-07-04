@@ -69,6 +69,36 @@ static NS_DEFINE_CID(kCClipboardCID, NS_CLIPBOARD_CID);
 static NS_DEFINE_CID(kCTransferableCID, NS_TRANSFERABLE_CID);
 static NS_DEFINE_CID(kHTMLConverterCID, NS_HTMLFORMATCONVERTER_CID);
 
+// ── DenBrowser internal clipboard ────────────────────────────────────────────
+// Compile-time clipboard allow-list. build.sh injects entries from
+// site-config.json between the sentinel markers at build time.
+// ── DEN: CLIPBOARD_SITES ──
+static const char* const kDenClipboardSites[] = { nullptr };
+// ── DEN END: CLIPBOARD_SITES ──
+
+// Set by FireClipboardEvent on paste in a listed site; read by
+// nsClipboardProxy::GetDataSnapshotSync to trigger the IPC path to the
+// parent-process internal clipboard (ContentParent::gDenParentClipText).
+bool gDenServePasteFromInternal = false;
+
+static bool DenClipHostMatch(const nsACString& aHost, const char* aPat) {
+  nsDependentCString pat(aPat);
+  if (aHost.Equals(pat)) return true;
+  // Subdomain match: host must end with "." + pattern.
+  if (aHost.Length() > pat.Length() + 1) {
+    return aHost.CharAt(aHost.Length() - pat.Length() - 1) == '.' &&
+           Substring(aHost, aHost.Length() - pat.Length()).Equals(pat);
+  }
+  return false;
+}
+
+static bool DenClipSiteAllowed(const nsACString& aHost) {
+  for (int i = 0; kDenClipboardSites[i]; ++i) {
+    if (DenClipHostMatch(aHost, kDenClipboardSites[i])) return true;
+  }
+  return false;
+}
+
 // copy string data onto the transferable
 static nsresult AppendString(nsITransferable* aTransferable,
                              const nsAString& aString, const char* aFlavor);
@@ -822,6 +852,27 @@ bool nsCopySupport::FireClipboardEvent(
   BrowsingContext* bc = piWindow->GetBrowsingContext();
   const bool chromeShell = bc && bc->IsChrome();
 
+  // DenBrowser: block clipboard cut/copy for all content including browser UI.
+  // Listed sites: let the native copy flow proceed — ContentParent::RecvSetClipboard
+  // captures text/plain before nsBaseClipboard::SetData suppresses the OS write.
+  // This avoids the shadow-DOM duplication from manual GetTransferableForSelection;
+  // Firefox's own nsHTMLCopyEncoder handles Amazon-style shadow DOM correctly.
+  // Non-listed sites (or no allow-list configured): block immediately.
+  if (originalEventMessage == eCopy || originalEventMessage == eCut) {
+    if (kDenClipboardSites[0]) {
+      nsAutoCString host;
+      if (nsIURI* uri = doc->GetDocumentURI()) {
+        uri->GetHost(host);
+      }
+      if (!DenClipSiteAllowed(host)) {
+        return false;
+      }
+      // Listed site — fall through to native copy/cut path.
+    } else {
+      return false;
+    }
+  }
+
   // next, fire the cut, copy or paste event
   bool doDefault = true;
   RefPtr<DataTransfer> clipboardData;
@@ -881,6 +932,22 @@ bool nsCopySupport::FireClipboardEvent(
   if (originalEventMessage == ePaste) {
     if (aActionTaken) {
       *aActionTaken = true;
+    }
+    // DenBrowser: set the serve-from-internal flag right before returning so
+    // the editor's clipboard read (which happens synchronously after we return
+    // doDefault=true) is intercepted by nsClipboardProxy.  Placed here rather
+    // than inside the chromeShell/clipboardevents block above so it runs even
+    // when dom.event.clipboardevents.enabled is locked false.  Reset first so
+    // each paste starts from a clean state.
+    gDenServePasteFromInternal = false;
+    if (doDefault && kDenClipboardSites[0]) {
+      nsAutoCString host;
+      if (nsIURI* uri = doc->GetDocumentURI()) {
+        uri->GetHost(host);
+      }
+      if (DenClipSiteAllowed(host)) {
+        gDenServePasteFromInternal = true;
+      }
     }
     return doDefault;
   }

@@ -5581,6 +5581,12 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
     return false;
   }
 
+  // DenBrowser: block clipboard commands from web content.
+  if (aHTMLCommandName.LowerCaseEqualsLiteral("cut") ||
+      aHTMLCommandName.LowerCaseEqualsLiteral("copy") ||
+      aHTMLCommandName.LowerCaseEqualsLiteral("paste")) {
+    return false;
+  }
   //  for optional parameters see dom/src/base/nsHistory.cpp: HistoryImpl::Go()
   //  this might add some ugly JS dependencies?
 
