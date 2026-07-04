@@ -2945,19 +2945,12 @@ RefPtr<MediaManager::StreamPromise> MediaManager::GetUserMedia(
         [[fallthrough]];
       case MediaSourceEnum::Screen:
       case MediaSourceEnum::Window:
-        // Deny screensharing request if support is disabled, or
-        // the requesting document is not from a host on the whitelist.
-        if (!Preferences::GetBool(
-                ((videoType == MediaSourceEnum::Browser)
-                     ? "media.getusermedia.browser.enabled"
-                     : "media.getusermedia.screensharing.enabled"),
-                false) ||
-            (!privileged && !aWindow->IsSecureContext())) {
-          return StreamPromise::CreateAndReject(
-              MakeRefPtr<MediaMgrError>(MediaMgrError::Name::NotAllowedError),
-              __func__);
-        }
-        break;
+        // DenBrowser: screen/window/browser capture unconditionally rejected
+        // regardless of prefs or caller privilege.
+        return StreamPromise::CreateAndReject(
+            MakeRefPtr<MediaMgrError>(MediaMgrError::Name::NotAllowedError,
+                                      "DenBrowser policy: screen capture is disabled"),
+            __func__);
 
       case MediaSourceEnum::Microphone:
       case MediaSourceEnum::Other:
