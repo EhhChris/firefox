@@ -4764,6 +4764,10 @@ nsresult nsCocoaWindow::CreateNativeWindow(const NSRect& aRect,
                                            styleMask:features
                                              backing:NSBackingStoreBuffered
                                                defer:YES];
+  // DenBrowser: prevent this window from appearing in any screen capture API,
+  // screen recorder, or screenshot tool. NSWindowSharingNone instructs the
+  // macOS compositor to exclude the window's backing store from capture.
+  [mWindow setSharingType:NSWindowSharingNone];
 
   // Make sure that window titles don't leak to disk in private browsing mode
   // due to macOS' resume feature.
