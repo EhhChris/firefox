@@ -8444,6 +8444,55 @@ static void MaybeConvertToReplaceLoad(nsDocShellLoadState* aLoadState,
   }
 }
 
+// ── DenBrowser site filter ────────────────────────────────────────────────────
+// Compile-time whitelist/blacklist. build.sh injects entries from
+// site-config.json between the sentinel markers at build time.
+//
+// Whitelist takes priority: if any whitelist entries are present, only matching
+// hosts are allowed for http/https.  Blacklist is used only when whitelist is
+// empty.  Both empty = no filtering.
+// ── DEN: SITE_WHITELIST ──
+static const char* const kDenSiteWhitelist[] = { nullptr };
+// ── DEN END: SITE_WHITELIST ──
+// ── DEN: SITE_BLACKLIST ──
+static const char* const kDenSiteBlacklist[] = { nullptr };
+// ── DEN END: SITE_BLACKLIST ──
+
+static bool DenSiteHostMatch(const nsACString& aHost, const char* aPat) {
+  nsDependentCString pat(aPat);
+  if (aHost.Equals(pat)) return true;
+  // Subdomain match: host must end with "." + pattern.
+  if (aHost.Length() > pat.Length() + 1) {
+    return aHost.CharAt(aHost.Length() - pat.Length() - 1) == '.' &&
+           Substring(aHost, aHost.Length() - pat.Length()).Equals(pat);
+  }
+  return false;
+}
+
+static bool DenSiteNavAllowed(nsIURI* aURI) {
+  if (!aURI) return true;
+  nsAutoCString scheme;
+  aURI->GetScheme(scheme);
+  // Only filter http/https — browser-internal URIs always pass.
+  if (!scheme.EqualsLiteral("http") && !scheme.EqualsLiteral("https")) {
+    return true;
+  }
+  nsAutoCString host;
+  aURI->GetHost(host);
+  // Whitelist: if any entries exist, only matching hosts are allowed.
+  if (kDenSiteWhitelist[0]) {
+    for (int i = 0; kDenSiteWhitelist[i]; ++i) {
+      if (DenSiteHostMatch(host, kDenSiteWhitelist[i])) return true;
+    }
+    return false;
+  }
+  // Blacklist: block matching hosts.
+  for (int i = 0; kDenSiteBlacklist[i]; ++i) {
+    if (DenSiteHostMatch(host, kDenSiteBlacklist[i])) return false;
+  }
+  return true;
+}
+
 // InternalLoad performs several of the steps from
 // https://html.spec.whatwg.org/#navigate.
 nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
@@ -8496,6 +8545,21 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
       "Load must be targeting this BrowsingContext");
 
   MOZ_TRY(CheckDisallowedJavascriptLoad(aLoadState));
+
+  // DenBrowser: apply compile-time site filter.  Return NS_ERROR_BLOCKED_BY_POLICY
+  // so docshell maps it to the "Blocked Page" neterror (the message string is
+  // overridden in appstrings.properties below).  Call DisplayLoadError directly
+  // because InternalLoad returns BEFORE opening a channel — without an explicit
+  // call, no channel reaches OnStop and the error page never renders; the tab
+  // just sits on the previous content.
+  if (!DenSiteNavAllowed(aLoadState->URI())) {
+    MOZ_LOG(gDocShellLeakLog, LogLevel::Warning,
+            ("DOCSHELL %p blocked navigation to %s by DenBrowser site filter\n",
+             this, aLoadState->URI()->GetSpecOrDefault().get()));
+    DisplayLoadError(NS_ERROR_BLOCKED_BY_POLICY, aLoadState->URI(), nullptr,
+                     nullptr);
+    return NS_ERROR_BLOCKED_BY_POLICY;
+  }
 
   // If we don't have a target, we're loading into ourselves, and our load
   // delegate may want to intercept that load.
