@@ -3468,8 +3468,8 @@ nsresult ContentParent::GetClipboardDataInternal(
       IPCTransferableData transferableData;
       nsContentUtils::TransferableToIPCTransferableData(
           denTrans, &transferableData, true /* aInSyncMessage */, this);
-      *aTransferableDataOrError = std::move(transferableData);
-      return IPC_OK();
+      *aResult = std::move(transferableData);
+      return NS_OK;
     }
   }
 
@@ -3487,7 +3487,6 @@ nsresult ContentParent::GetClipboardDataInternal(
   }
 
   nsCOMPtr<nsITransferable> transferable = result.unwrap();
-  RefPtr<WindowGlobalParent> window = aRequestingWindowContext.get_canonical();
 
   rv = aFunction(clipboard, transferable, aWhichClipboard, window);
   if (NS_FAILED(rv)) {

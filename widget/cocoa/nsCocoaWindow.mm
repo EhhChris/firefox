@@ -6891,7 +6891,7 @@ nsresult nsCocoaWindow::SetTitle(const nsAString& aTitle) {
   // window-list APIs (CGWindowListCopyWindowInfo) without any permission
   // prompt — see patch 016 header for the full rationale.
   NSString* title = @"DenBrowser";
-  if (mWindow.drawsContentsIntoWindowFrame && !mWindow.wantsTitleDrawn) {
+  if (mWindow.drawsContentsIntoWindowFrame) {
     // Don't cause invalidations when the title isn't displayed.
     [mWindow disableSetNeedsDisplay];
     [mWindow setTitle:title];

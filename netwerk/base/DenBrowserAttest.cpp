@@ -33,7 +33,6 @@
 #include "mozilla/Logging.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/Unused.h"
 #include "nsComponentManagerUtils.h"
 #include "nsHttp.h"
 #include "nsHttpRequestHead.h"
@@ -379,9 +378,9 @@ nsresult AddAttestHeaders(mozilla::net::nsHttpRequestHead& aHead, nsIURI* aURI,
     return NS_OK;
   }
 
-  mozilla::Unused << aHead.SetHeader("X-DenBrowser-Ts"_ns, tsStr, false);
-  mozilla::Unused << aHead.SetHeader("X-DenBrowser-Nonce"_ns, nonceB64, false);
-  mozilla::Unused << aHead.SetHeader("X-DenBrowser-Token"_ns, tokenB64, false);
+  (void)aHead.SetHeader("X-DenBrowser-Ts"_ns, tsStr, false);
+  (void)aHead.SetHeader("X-DenBrowser-Nonce"_ns, nonceB64, false);
+  (void)aHead.SetHeader("X-DenBrowser-Token"_ns, tokenB64, false);
 
   return NS_OK;
 }
