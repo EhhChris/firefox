@@ -5937,6 +5937,214 @@ static already_AddRefed<nsIFile> GreOmniPath(int argc, char** argv) {
 }
 #endif
 
+// DenBrowser: strip command-line flags and environment variables that can
+// bypass security controls before any Firefox code reads them.
+//
+// argv stripping covers:
+//   - --profile / -P / --ProfileManager / --CreateProfile / --migration
+//     (custom profile that bypasses the autoconfig lockdown + ramdisk hook)
+//   - --marionette / --remote-debugging-port / --remote-allow-system-access /
+//     --start-debugger-server /
+//     --jsdebugger / --wait-for-jsdebugger / --jsconsole / --attach-console /
+//     --console  (remote-control and debugging surfaces)
+//   - --screenshot (CLI capture-to-disk mode that bypasses patch 001)
+//   - --headless / --new-instance / --no-remote / --safe-mode / --purgecaches
+//     (modes that change save / sandbox / pref-load semantics)
+//   - --setDefaultBrowser / --preferences / --recording / --recordreplay
+//
+// Inline values (--flag=value and, on Windows, /flag:value) are recognized.
+// Only flags declared as value-taking consume a following argv entry; this
+// avoids turning a valueless lockdown flag followed by a URL into an accidental
+// request to remove both entries.
+//
+// Env stripping covers:
+//   - MOZ_LOG / MOZ_LOG_FILE / NSPR_LOG_MODULES / NSPR_LOG_FILE / R_LOG_*
+//     (logging targets — would write request bodies, prefs, JS, etc. to disk)
+//   - MOZ_DISABLE_*_SANDBOX (process-sandbox bypasses)
+//   - MOZ_HEADLESS / MOZ_FORCE_DISABLE_E10S / MOZ_USE_REMOTE / MOZ_NO_REMOTE /
+//     MOZ_MARIONETTE / MARIONETTE  (remote-control + alternate-mode toggles)
+//   - MOZ_CRASHREPORTER* (re-enable crash dump writes despite mozconfig flag)
+//   - MOZ_PROFILER_STARTUP* (writes profile samples — incl. JS source — to disk)
+//   - XPCOM_DEBUG_BREAK / MOZ_DEBUG_CHILD_* (debugger attach helpers)
+//
+// This patch operates at the C++ level and cannot be circumvented by profile
+// configuration, mozilla.cfg edits, or enterprise policy changes.
+enum class DenArgValue { None, Required, Optional };
+
+// Return true when aRaw is aFlag in any command-line spelling Firefox accepts.
+// The early XRE CheckArg helper only understands separate values, while the
+// later nsICommandLine parser also accepts --flag=value and Windows /flag:value.
+static bool DenArgMatches(const char* aRaw, const char* aFlag,
+                          bool* aHasInlineValue) {
+  const char* p = aRaw;
+  if (p[0] == '-') {
+    p += (p[1] == '-') ? 2 : 1;
+  }
+#ifdef XP_WIN
+  else if (p[0] == '/') {
+    ++p;
+  }
+#endif
+  else {
+    return false;
+  }
+
+  const char* separator = strchr(p, '=');
+#ifdef XP_WIN
+  const char* colon = strchr(p, ':');
+  if (colon && (!separator || colon < separator)) {
+    separator = colon;
+  }
+#endif
+  size_t nameLength = separator ? static_cast<size_t>(separator - p)
+                                : strlen(p);
+  *aHasInlineValue = separator != nullptr;
+  return strlen(aFlag) == nameLength &&
+         nsCRT::strncasecmp(p, aFlag, nameLength) == 0;
+}
+
+static bool DenLooksLikeArg(const char* aRaw) {
+  if (!aRaw) return false;
+  if (aRaw[0] == '-') return true;
+#ifdef XP_WIN
+  if (aRaw[0] == '/') return true;
+#endif
+  return false;
+}
+
+static void DenStripArg(const char* aFlag,
+                        DenArgValue aValue = DenArgValue::None) {
+  for (int i = 1; i < gArgc;) {
+    bool hasInlineValue = false;
+    if (!DenArgMatches(gArgv[i], aFlag, &hasInlineValue)) {
+      ++i;
+      continue;
+    }
+
+    int toRemove = 1;
+    if (!hasInlineValue && aValue != DenArgValue::None && i + 1 < gArgc &&
+        !DenLooksLikeArg(gArgv[i + 1])) {
+      toRemove = 2;
+    }
+    gArgc -= toRemove;
+    memmove(gArgv + i, gArgv + i + toRemove, sizeof(char*) * (gArgc - i + 1));
+    // Do not increment i: the slot now holds the next argument.
+  }
+}
+
+// Fully remove a variable from the environment so PR_GetEnv() / getenv() see
+// it as unset.  PR_SetEnv("NAME=") only sets it to empty string — code that
+// uses `if (PR_GetEnv("X"))` for presence checks would still take the branch.
+// We need real unset semantics from the OS layer.
+static void DenStripEnv(const char* aName) {
+#ifdef XP_WIN
+  // MSVC CRT: _putenv_s(name, "") removes the entry from the _environ table
+  // that getenv() / PR_GetEnv() consult on Windows.  SetEnvironmentVariableA
+  // also clears the process env block read by some Win32 APIs directly.
+  _putenv_s(aName, "");
+  ::SetEnvironmentVariableA(aName, nullptr);
+#else
+  unsetenv(aName);
+#endif
+}
+
+static void DenBrowserStripBlockedArgs() {
+  // Profile manipulation (bypasses autoconfig lockdown + ramdisk profile).
+  DenStripArg("profile", DenArgValue::Required);  // --profile <path>
+  DenStripArg("p", DenArgValue::Required);        // -P <name>
+  DenStripArg("profilemanager");        // --ProfileManager UI
+  DenStripArg("createprofile", DenArgValue::Required);
+  DenStripArg("migration");             // --migration profile-import wizard
+
+  // Remote control and debugging surfaces.
+  DenStripArg("marionette");            // WebDriver / GeckoDriver
+  DenStripArg("remote-debugging-port", DenArgValue::Optional);
+  DenStripArg("remote-allow-system-access");
+  DenStripArg("start-debugger-server", DenArgValue::Optional);
+  DenStripArg("jsdebugger");            // JS debugger attach
+  DenStripArg("wait-for-jsdebugger");
+  DenStripArg("jsconsole");             // legacy JS console
+  DenStripArg("attach-console");        // Windows console attach
+  DenStripArg("console");
+
+  // Modes that change save / sandbox / pref-load semantics.
+  DenStripArg("screenshot", DenArgValue::Optional);
+  DenStripArg("headless");
+  DenStripArg("new-instance");          // skip single-instance check
+  DenStripArg("no-remote");             // ditto
+  DenStripArg("safe-mode");             // disables JIT + custom prefs
+  DenStripArg("purgecaches");           // wipes startup cache
+  DenStripArg("allow-downgrade");       // bypass profile-schema downgrade guard
+
+  // Side-effecting flags with no place in a locked-down deployment.
+  DenStripArg("setdefaultbrowser");
+  DenStripArg("preferences");           // shortcut to about:preferences
+  DenStripArg("recording");             // record-and-replay (debug builds)
+  DenStripArg("recordreplay");
+}
+
+static void DenBrowserStripBlockedEnv() {
+  // Logging — would route request bodies, prefs, JS source, NSS/SSL session
+  // data into a user-readable file on disk.
+  DenStripEnv("MOZ_LOG");
+  DenStripEnv("MOZ_LOG_FILE");
+  DenStripEnv("NSPR_LOG_MODULES");
+  DenStripEnv("NSPR_LOG_FILE");
+  DenStripEnv("R_LOG_DESTINATION");
+  DenStripEnv("R_LOG_LEVEL");
+  DenStripEnv("R_LOG_VERBOSE");
+  DenStripEnv("SSLKEYLOGFILE");         // dumps TLS keys to a file — catastrophic
+
+  // Sandbox bypasses — weaken process isolation between content and parent.
+  DenStripEnv("MOZ_DISABLE_CONTENT_SANDBOX");
+  DenStripEnv("MOZ_DISABLE_GMP_SANDBOX");
+  DenStripEnv("MOZ_DISABLE_RDD_SANDBOX");
+  DenStripEnv("MOZ_DISABLE_SOCKET_PROCESS_SANDBOX");
+  DenStripEnv("MOZ_DISABLE_GPU_SANDBOX");
+  DenStripEnv("MOZ_DISABLE_UTILITY_SANDBOX");
+  DenStripEnv("MOZ_DISABLE_VR_SANDBOX");
+  DenStripEnv("MOZ_PERMIT_CSP_VIOLATION");
+
+  // Remote control, alternate modes, debug attach.
+  DenStripEnv("MOZ_HEADLESS");
+  DenStripEnv("MOZ_HEADLESS_WIDTH");
+  DenStripEnv("MOZ_HEADLESS_HEIGHT");
+  DenStripEnv("MOZ_FORCE_DISABLE_E10S");
+  DenStripEnv("MOZ_USE_REMOTE");
+  DenStripEnv("MOZ_NO_REMOTE");
+  DenStripEnv("MOZ_MARIONETTE");
+  DenStripEnv("MARIONETTE");
+  DenStripEnv("MOZ_REMOTE_AGENT");
+  DenStripEnv("XPCOM_DEBUG_BREAK");
+  DenStripEnv("XRE_MAIN_BREAK");
+  DenStripEnv("MOZ_DEBUG_CHILD_PROCESS");
+  DenStripEnv("MOZ_DEBUG_CHILD_PAUSE");
+
+  // Crash reporter — overrides mozconfig --disable-crashreporter and would
+  // write a minidump (process memory snapshot) to disk on crash.
+  DenStripEnv("MOZ_CRASHREPORTER");
+  DenStripEnv("MOZ_CRASHREPORTER_DISABLE");
+  DenStripEnv("MOZ_CRASHREPORTER_NO_REPORT");
+  DenStripEnv("MOZ_CRASHREPORTER_SHUTDOWN");
+  DenStripEnv("MOZ_CRASHREPORTER_FULLDUMP");
+  DenStripEnv("MOZ_CRASHREPORTER_RESTART_ARG_0");
+
+  // Profiler — writes performance samples (incl. JS source frames) to disk.
+  DenStripEnv("MOZ_PROFILER_STARTUP");
+  DenStripEnv("MOZ_PROFILER_STARTUP_INTERVAL");
+  DenStripEnv("MOZ_PROFILER_STARTUP_FEATURES");
+  DenStripEnv("MOZ_PROFILER_STARTUP_FEATURES_BITFIELD");
+  DenStripEnv("MOZ_PROFILER_STARTUP_FILTERS");
+  DenStripEnv("MOZ_PROFILER_SHUTDOWN");
+  DenStripEnv("MOZ_PROFILER_HELP");
+
+  // gtest / fuzzer entry points — enable special test-only execution paths.
+  DenStripEnv("MOZ_RUN_GTEST");
+  DenStripEnv("FUZZER");
+  DenStripEnv("MOZ_FUZZ");
+  DenStripEnv("MOZ_GMP_SANDBOX_LOGGING");
+}
+
 /*
  * XRE_main - A class based main entry point used by most platforms.
  *            Note that on OSX, aAppData->xreDirectory will point to
@@ -5945,6 +6153,10 @@ static already_AddRefed<nsIFile> GreOmniPath(int argc, char** argv) {
 int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
   gArgc = argc;
   gArgv = argv;
+  // DenBrowser: strip blocked argv flags and environment variables
+  // before any other Firefox code reads them.
+  DenBrowserStripBlockedArgs();
+  DenBrowserStripBlockedEnv();
 
   ScopedLogging log;
 
