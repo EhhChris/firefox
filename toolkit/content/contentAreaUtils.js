@@ -295,6 +295,14 @@ function internalSave(
   aPrincipal,
   aSaveCompleteCallback
 ) {
+  // DenBrowser: all saves to disk are unconditionally blocked.
+  Services.prompt.alert(
+    Services.wm.getMostRecentWindow("navigator:browser"),
+    "DenBrowser",
+    "Saving files is not available in this browser."
+  );
+  return;
+
   if (aSkipPrompt == undefined) {
     aSkipPrompt = false;
   }
