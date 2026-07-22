@@ -1389,6 +1389,8 @@ class AddonInstall {
    * @throws if installation cannot proceed from the current state
    */
   install() {
+    // DenBrowser: extension installation permanently disabled.
+    throw new Error("DenBrowser policy: extension installation is disabled.");
     switch (this.state) {
       case AddonManager.STATE_DOWNLOADED:
         this.checkPrompt();
