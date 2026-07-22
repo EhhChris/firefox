@@ -219,13 +219,7 @@ function init_all() {
       NimbusFeatures.moreFromMozilla.getVariable("template");
     register_module("paneMoreFromMozilla", gMoreFromMozillaPane);
   }
-  // The Sync category needs to be the last of the "real" categories
-  // registered and inititalized since many tests wait for the
-  // "sync-pane-loaded" observer notification before starting the test.
-  if (Services.prefs.getBoolPref("identity.fxaccounts.enabled")) {
-    document.getElementById("category-sync").hidden = false;
-    register_module("paneSync", gSyncPane);
-  }
+  // DenBrowser: Sync UI permanently removed.
   register_module("paneSearchResults", gSearchResultsPane);
   gSearchResultsPane.init();
   gMainPane.preInit();
