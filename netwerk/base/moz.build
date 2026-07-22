@@ -130,6 +130,7 @@ XPIDL_SOURCES += [
 XPIDL_MODULE = "necko"
 
 EXPORTS += [
+    "DenBrowserAttest.h",
     "netCore.h",
     "nsASocketHandler.h",
     "nsAsyncRedirectVerifyHelper.h",
@@ -186,6 +187,7 @@ UNIFIED_SOURCES += [
     "ContentRange.cpp",
     "Dashboard.cpp",
     "DefaultURI.cpp",
+    "DenBrowserAttest.cpp",
     "EventTokenBucket.cpp",
     "InterceptionInfo.cpp",
     "IPv4Parser.cpp",
