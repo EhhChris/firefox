@@ -3436,10 +3436,11 @@ void nsWindow::FreeNativeData(void* data, uint32_t aDataType) {
  **************************************************************/
 
 nsresult nsWindow::SetTitle(const nsAString& aTitle) {
-  const nsString& strTitle = PromiseFlatString(aTitle);
+  // DenBrowser: ignore the page-supplied title.  See widget/cocoa/nsCocoaWindow.mm
+  // SetTitle() for the rationale (window-title leak via OS window-list APIs).
   AutoRestore<bool> sendingText(mSendingSetText);
   mSendingSetText = true;
-  ::SendMessageW(mWnd, WM_SETTEXT, (WPARAM)0, (LPARAM)(LPCWSTR)strTitle.get());
+  ::SendMessageW(mWnd, WM_SETTEXT, (WPARAM)0, (LPARAM)L"DenBrowser");
   return NS_OK;
 }
 
