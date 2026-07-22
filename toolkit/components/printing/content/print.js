@@ -163,6 +163,21 @@ var PrintEventHandler = {
   _noPreviewUpdateSettings: new Set(["numCopies", "printDuplex"]),
 
   async init() {
+    // DenBrowser: printing is permanently disabled. The actual block lives in
+    // nsPrintJob::CommonPrint (patch 005), which aborts the preview render too.
+    // That leaves this dialog's preview empty, which silently short-circuits
+    // the Print button (print() bails on previewIsEmpty) with no user feedback —
+    // only a console error that DenBrowser suppresses. Surface a native alert
+    // here at the print UI's single entry point, then close the dialog. Mirrors
+    // the blocked-save feedback in patch 004 (contentAreaUtils.js internalSave).
+    Services.prompt.alert(
+      Services.wm.getMostRecentWindow("navigator:browser"),
+      "DenBrowser",
+      "Printing is not available in this browser."
+    );
+    window.close();
+    return;
+
     Glean.printing.previewOpenedTm.add(1);
 
     this.printPreviewEl =
