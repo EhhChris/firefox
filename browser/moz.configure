@@ -13,7 +13,14 @@ imply_option("MOZ_NORMANDY", True)
 imply_option("MOZ_PROFILE_MIGRATOR", True)
 
 
-imply_option("MOZ_APP_VENDOR", "Mozilla")
+# DenBrowser: vendor + basename override the upstream defaults ("Mozilla",
+# "Firefox") so the Windows profile dir is %APPDATA%\DenBrowser\DenBrowser\
+# Profiles\ instead of %APPDATA%\Mozilla\Firefox\Profiles\.  Required here
+# (not in the branding configure.sh) because MOZ_APP_VENDOR uses
+# project_flag(possible_origins=("implied",)) — imply_option is the only
+# accepted origin.
+imply_option("MOZ_APP_VENDOR", "DenBrowser")
+imply_option("MOZ_APP_BASENAME", "DenBrowser")
 imply_option("MOZ_APP_ID", "{ec8030f7-c20a-464f-9b0e-13a3a9e97384}")
 # Include the DevTools client, not just the server (which is the default)
 imply_option("MOZ_DEVTOOLS", "all")
