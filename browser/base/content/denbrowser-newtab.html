@@ -1,0 +1,39 @@
+<!doctype html>
+
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+
+<!-- DenBrowser custom new-tab page. Served for about:denbrowserhome by the C++
+   - AboutRedirector (see patch 018), the same mechanism that renders about:robots
+   - and about:privatebrowsing. New tabs are pointed here because the stock
+   - activity-stream new-tab page never initializes in this hardened,
+   - permanent-private-browsing build. The shortcut tiles between the
+   - DEN_SHORTCUTS markers are generated at build time by build.sh from
+   - config/site-config.json's "bookmarks" list — do not edit them by hand. -->
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src chrome:; object-src 'none';"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <title>New Tab</title>
+    <link
+      rel="stylesheet"
+      href="chrome://browser/content/denbrowser-newtab.css"
+      media="all"
+    />
+  </head>
+  <body>
+    <main class="den-newtab">
+      <nav class="den-tiles" aria-label="Shortcuts">
+        <!-- DEN_SHORTCUTS_START -->
+        <p class="den-empty">No shortcuts configured.</p>
+        <!-- DEN_SHORTCUTS_END -->
+      </nav>
+    </main>
+  </body>
+</html>

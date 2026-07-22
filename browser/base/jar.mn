@@ -13,6 +13,8 @@ browser.jar:
         content/browser/aboutRobots.xhtml             (content/aboutRobots.xhtml)
         content/browser/aboutRobots.js                (content/aboutRobots.js)
         content/browser/aboutRobots.css               (content/aboutRobots.css)
+        content/browser/denbrowser-newtab.html        (content/denbrowser-newtab.html)
+        content/browser/denbrowser-newtab.css         (content/denbrowser-newtab.css)
         content/browser/logos/etp-mobile.svg          (content/logos/etp-mobile.svg)
         content/browser/logos/fxa-logo.svg            (content/logos/fxa-logo.svg)
         content/browser/logos/lockwise.svg            (content/logos/lockwise.svg)
