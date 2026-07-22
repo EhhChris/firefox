@@ -1050,6 +1050,9 @@ export var ScreenshotsUtils = {
    * @param type The type of screenshot taken.
    */
   async takeScreenshot(browser, type) {
+    // DenBrowser: built-in screenshot capture disabled.
+    console.error("DenBrowser: screenshot capture is disabled by policy.");
+    return;
     this.closePanel(browser);
     this.closeOverlay(browser, {
       doNotResetMethods: true,
@@ -1178,6 +1181,9 @@ export var ScreenshotsUtils = {
    * @param browser The current browser
    */
   async copyScreenshotFromRegion(region, browser) {
+    // DenBrowser: built-in screenshot capture disabled.
+    console.error("DenBrowser: screenshot capture is disabled by policy.");
+    return;
     let canvas = await this.createCanvas(region, browser);
     let blob = await canvas.convertToBlob();
 
@@ -1261,6 +1267,9 @@ export var ScreenshotsUtils = {
    * @param browser The current browser
    */
   async downloadScreenshotFromRegion(title, region, browser) {
+    // DenBrowser: built-in screenshot capture disabled.
+    console.error("DenBrowser: screenshot capture is disabled by policy.");
+    return;
     let canvas = await this.createCanvas(region, browser);
     let blob = await canvas.convertToBlob();
     let blobURL = URL.createObjectURL(blob);
