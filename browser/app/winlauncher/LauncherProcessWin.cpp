@@ -3,6 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #include "LauncherProcessWin.h"
+#include "DenBrowserLaunchPolicy.h"
 
 #include "mozilla/CmdLineAndEnvUtils.h"
 #include "mozilla/DebugOnly.h"
@@ -20,7 +21,16 @@
 
 #include <windows.h>
 #include <processthreadsapi.h>
+#include <shlobj.h>
 #include <shlwapi.h>
+
+#include <algorithm>
+#include <iterator>
+#include <stdlib.h>
+#include <string>
+#include <string.h>
+#include <utility>
+#include <vector>
 
 #include "DllBlocklistInit.h"
 #include "ErrorHandler.h"
@@ -42,7 +52,212 @@ namespace mozilla {
 // "volatile" because something in another process may.
 const volatile DeelevationStatus gDeelevationStatus =
     DeelevationStatus::DefaultStaticValue;
+const volatile DenBrowserLaunchAuthorization gDenBrowserLaunchAuthorization =
+    DenBrowserLaunchAuthorization::Untrusted;
 }  // namespace mozilla
+
+using DenBrowserEnvironmentEntry = std::pair<std::wstring, std::wstring>;
+using DenBrowserEnvironment = std::vector<DenBrowserEnvironmentEntry>;
+
+static bool DenBrowserGetKnownFolder(REFKNOWNFOLDERID aFolder, HANDLE aToken,
+                                     std::wstring& aPath) {
+  wchar_t* rawPath = nullptr;
+  HRESULT result =
+      ::SHGetKnownFolderPath(aFolder, KF_FLAG_DONT_VERIFY, aToken, &rawPath);
+  if (FAILED(result) || !rawPath || !*rawPath) {
+    if (rawPath) {
+      ::CoTaskMemFree(rawPath);
+    }
+    return false;
+  }
+
+  aPath.assign(rawPath);
+  ::CoTaskMemFree(rawPath);
+  return true;
+}
+
+static bool DenBrowserGetApplicationDirectory(const wchar_t* aBinaryPath,
+                                              std::wstring& aDirectory) {
+  if (!aBinaryPath || !*aBinaryPath) {
+    return false;
+  }
+
+  aDirectory.assign(aBinaryPath);
+  size_t separator = aDirectory.find_last_of(L"\\/");
+  if (separator == std::wstring::npos || separator < 2) {
+    return false;
+  }
+  aDirectory.resize(separator);
+  return aDirectory.find(L';') == std::wstring::npos;
+}
+
+static bool DenBrowserBuildEnvironment(
+    HANDLE aToken, const std::wstring& aApplicationDirectory,
+    DenBrowserEnvironment& aEnvironment) {
+  wchar_t windowsBuffer[MAX_PATH + 1] = {};
+  UINT windowsLength =
+      ::GetWindowsDirectoryW(windowsBuffer, std::size(windowsBuffer));
+  if (!windowsLength || windowsLength >= std::size(windowsBuffer)) {
+    return false;
+  }
+
+  wchar_t systemBuffer[MAX_PATH + 1] = {};
+  UINT systemLength =
+      ::GetSystemDirectoryW(systemBuffer, std::size(systemBuffer));
+  if (!systemLength || systemLength >= std::size(systemBuffer)) {
+    return false;
+  }
+
+  std::wstring windowsDirectory(windowsBuffer, windowsLength);
+  if (windowsDirectory.size() < 3 || windowsDirectory[1] != L':') {
+    return false;
+  }
+
+  std::wstring localAppData;
+  if (!DenBrowserGetKnownFolder(FOLDERID_LocalAppData, aToken, localAppData)) {
+    return false;
+  }
+
+  std::wstring programFiles;
+  if (!DenBrowserGetKnownFolder(FOLDERID_ProgramFiles, aToken, programFiles)) {
+    return false;
+  }
+
+  std::wstring path = aApplicationDirectory;
+  path.append(L";").append(systemBuffer).append(L";").append(windowsBuffer);
+  std::wstring temp = localAppData;
+  temp.append(L"\\Temp");
+
+  aEnvironment.clear();
+  aEnvironment.reserve(8);
+  aEnvironment.emplace_back(L"LOCALAPPDATA", std::move(localAppData));
+  aEnvironment.emplace_back(L"Path", std::move(path));
+  aEnvironment.emplace_back(L"ProgramFiles", programFiles);
+  aEnvironment.emplace_back(L"ProgramW6432", std::move(programFiles));
+  aEnvironment.emplace_back(L"SystemDrive", windowsDirectory.substr(0, 2));
+  aEnvironment.emplace_back(L"SystemRoot", std::move(windowsDirectory));
+  aEnvironment.emplace_back(L"TEMP", temp);
+  aEnvironment.emplace_back(L"TMP", std::move(temp));
+
+  std::sort(aEnvironment.begin(), aEnvironment.end(),
+            [](const DenBrowserEnvironmentEntry& aLeft,
+               const DenBrowserEnvironmentEntry& aRight) {
+              return _wcsicmp(aLeft.first.c_str(), aRight.first.c_str()) < 0;
+            });
+  for (size_t i = 1; i < aEnvironment.size(); ++i) {
+    if (!_wcsicmp(aEnvironment[i - 1].first.c_str(),
+                  aEnvironment[i].first.c_str())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static mozilla::UniquePtr<wchar_t[]> DenBrowserSerializeEnvironment(
+    const DenBrowserEnvironment& aEnvironment) {
+  size_t totalLength = 1;
+  for (const auto& [name, value] : aEnvironment) {
+    if (name.empty() || name.find(L'=') != std::wstring::npos) {
+      return nullptr;
+    }
+    size_t entryLength = name.size() + 1 + value.size() + 1;
+    if (entryLength > 32767 || totalLength > 32767 - entryLength) {
+      return nullptr;
+    }
+    totalLength += entryLength;
+  }
+
+  auto block = mozilla::MakeUnique<wchar_t[]>(totalLength);
+  if (!block) {
+    return nullptr;
+  }
+
+  wchar_t* cursor = block.get();
+  for (const auto& [name, value] : aEnvironment) {
+    wmemcpy(cursor, name.c_str(), name.size());
+    cursor += name.size();
+    *cursor++ = L'=';
+    wmemcpy(cursor, value.c_str(), value.size());
+    cursor += value.size();
+    *cursor++ = L'\0';
+  }
+  *cursor = L'\0';
+  return block;
+}
+
+static bool DenBrowserWideToUtf8(const std::wstring& aValue,
+                                 std::string& aResult) {
+  if (aValue.empty()) {
+    aResult.clear();
+    return true;
+  }
+
+  if (aValue.size() > 32767) {
+    return false;
+  }
+  int inputLength = static_cast<int>(aValue.size());
+  int length =
+      ::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, aValue.c_str(),
+                            inputLength, nullptr, 0, nullptr, nullptr);
+  if (length <= 0) {
+    return false;
+  }
+  aResult.resize(length);
+  return ::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, aValue.c_str(),
+                               inputLength, aResult.data(), length, nullptr,
+                               nullptr) == length;
+}
+
+static bool DenBrowserApplyCurrentEnvironment(
+    const DenBrowserEnvironment& aEnvironment) {
+  // Clear the CRT's narrow environment before setting approved values. This is
+  // what early EnvHasValue/getenv consumers read in the launcher.
+  std::vector<std::string> narrowNames;
+  for (char** item = _environ; item && *item; ++item) {
+    const char* separator = strchr(*item, '=');
+    if (separator && separator != *item) {
+      narrowNames.emplace_back(*item, separator - *item);
+    }
+  }
+  for (const std::string& name : narrowNames) {
+    if (_putenv_s(name.c_str(), "")) {
+      return false;
+    }
+  }
+
+  // Clear the native Unicode environment as well. Pseudo drive-current-
+  // directory entries begin with '='; they are omitted from the explicit
+  // browser environment block and are not valid SetEnvironmentVariable names.
+  wchar_t* rawEnvironment = ::GetEnvironmentStringsW();
+  if (!rawEnvironment) {
+    return false;
+  }
+  std::vector<std::wstring> wideNames;
+  for (const wchar_t* item = rawEnvironment; *item; item += wcslen(item) + 1) {
+    const wchar_t* separator = wcschr(item, L'=');
+    if (separator && separator != item) {
+      wideNames.emplace_back(item, separator - item);
+    }
+  }
+  ::FreeEnvironmentStringsW(rawEnvironment);
+  for (const std::wstring& name : wideNames) {
+    if (!::SetEnvironmentVariableW(name.c_str(), nullptr)) {
+      return false;
+    }
+  }
+
+  for (const auto& [name, value] : aEnvironment) {
+    std::string narrowName;
+    std::string narrowValue;
+    if (!DenBrowserWideToUtf8(name, narrowName) ||
+        !DenBrowserWideToUtf8(value, narrowValue) ||
+        _putenv_s(narrowName.c_str(), narrowValue.c_str()) ||
+        !::SetEnvironmentVariableW(name.c_str(), value.c_str())) {
+      return false;
+    }
+  }
+  return true;
+}
 
 /**
  * At this point the child process has been created in a suspended state. Any
@@ -70,6 +285,19 @@ static mozilla::LauncherVoidResult PostCreationSetup(
 
     mozilla::LauncherVoidResult result =
         txManager.Transfer(targetAddress, &aDStatus, sizeof(aDStatus));
+    if (result.isErr()) {
+      return result;
+    }
+
+    using mozilla::DenBrowserLaunchAuthorization;
+    using mozilla::gDenBrowserLaunchAuthorization;
+    targetAddress = (LPVOID)&gDenBrowserLaunchAuthorization;
+    auto const authorizationGuard = txManager.Protect(
+        targetAddress, sizeof(gDenBrowserLaunchAuthorization), PAGE_READWRITE);
+    const DenBrowserLaunchAuthorization authorization =
+        DenBrowserLaunchAuthorization::AuthorizedBrowser;
+    result = txManager.Transfer(targetAddress, &authorization,
+                                sizeof(authorization));
     if (result.isErr()) {
       return result;
     }
@@ -231,35 +459,11 @@ static void SetMitigationPolicies(mozilla::ProcThreadAttributes& aAttrs,
 #endif  // defined(_M_ARM64)
 }
 
-static mozilla::LauncherFlags ProcessCmdLine(int& aArgc, wchar_t* aArgv[]) {
-  mozilla::LauncherFlags result = mozilla::LauncherFlags::eNone;
-
-  if (mozilla::CheckArg(aArgc, aArgv, "wait-for-browser", nullptr,
-                        mozilla::CheckArgFlag::RemoveArg) ==
-          mozilla::ARG_FOUND ||
-      mozilla::CheckArg(aArgc, aArgv, "marionette", nullptr,
-                        mozilla::CheckArgFlag::None) == mozilla::ARG_FOUND ||
-      mozilla::CheckArg(aArgc, aArgv, "backgroundtask", nullptr,
-                        mozilla::CheckArgFlag::None) == mozilla::ARG_FOUND ||
-      mozilla::CheckArg(aArgc, aArgv, "headless", nullptr,
-                        mozilla::CheckArgFlag::None) == mozilla::ARG_FOUND ||
-      mozilla::CheckArg(aArgc, aArgv, "remote-debugging-port", nullptr,
-                        mozilla::CheckArgFlag::None) == mozilla::ARG_FOUND ||
-      mozilla::EnvHasValue("MOZ_AUTOMATION") ||
-      mozilla::EnvHasValue("MOZ_HEADLESS")) {
-    result |= mozilla::LauncherFlags::eWaitForBrowser;
-  }
-
-  if (mozilla::CheckArg(aArgc, aArgv, "no-deelevate") == mozilla::ARG_FOUND) {
-    result |= mozilla::LauncherFlags::eNoDeelevate;
-  }
-
-  if (mozilla::CheckArg(aArgc, aArgv, ATTEMPTING_DEELEVATION_FLAG) ==
-      mozilla::ARG_FOUND) {
-    result |= mozilla::LauncherFlags::eDeelevating;
-  }
-
-  return result;
+static mozilla::LauncherFlags ProcessCmdLine(int&, wchar_t*[]) {
+  // DenBrowser's public grammar contains no launcher-control switches. In
+  // particular, callers cannot request headless/debug automation, handle
+  // inheritance, waiting, or suppression of de-elevation.
+  return mozilla::LauncherFlags::eNone;
 }
 
 static void MaybeBreakForBrowserDebugging() {
@@ -319,10 +523,9 @@ static mozilla::Maybe<bool> RunAsLauncherProcess(int& argc, wchar_t** argv) {
   bool runAsLauncher = DoLauncherProcessChecks(argc, argv);
 
 #if defined(MOZ_LAUNCHER_PROCESS)
-  bool forceLauncher =
-      runAsLauncher &&
-      mozilla::CheckArg(argc, argv, "force-launcher", nullptr,
-                        mozilla::CheckArgFlag::RemoveArg) == mozilla::ARG_FOUND;
+  // DenBrowser must never let launcher crash telemetry or a registry override
+  // demote a validated launcher request into an in-process browser start.
+  bool forceLauncher = runAsLauncher;
 
   mozilla::LauncherRegistryInfo::ProcessType desiredType =
       runAsLauncher ? mozilla::LauncherRegistryInfo::ProcessType::Launcher
@@ -356,19 +559,73 @@ static mozilla::Maybe<bool> RunAsLauncherProcess(int& argc, wchar_t** argv) {
 namespace mozilla {
 
 Maybe<int> LauncherMain(int& argc, wchar_t* argv[]) {
-  EnsureBrowserCommandlineSafe(argc, argv);
+  const bool authorizedBrowser =
+      gDenBrowserLaunchAuthorization ==
+      DenBrowserLaunchAuthorization::AuthorizedBrowser;
+  const bool hasContentProcessFlag =
+      denbrowser::HasContentProcessFlag(argc, argv);
 
-  // return fast when we're a child process.
-  // (The remainder of this function has some side effects that are
-  // undesirable for content processes)
-  if (mozilla::CheckArg(argc, argv, "contentproc", nullptr,
-                        mozilla::CheckArgFlag::None) == mozilla::ARG_FOUND) {
-    // A child process should not instantiate LauncherRegistryInfo.
+  // A typed -contentproc flag is not authority. Genuine same-executable Gecko
+  // children use one canonical flag at argv[1] and have the installed browser
+  // as their actual parent. Anything else is rejected before launcher or
+  // browser initialization can reinterpret it.
+  if (hasContentProcessFlag) {
+    if (authorizedBrowser ||
+        !denbrowser::IsCanonicalContentProcessCommandLine(argc, argv)) {
+      return Some(127);
+    }
+#if defined(MOZ_LAUNCHER_PROCESS)
+    LauncherResult<bool> sameParent = IsSameBinaryAsParentProcess();
+    if (sameParent.isErr()) {
+      HandleLauncherError(sameParent.unwrapErr());
+      return Some(127);
+    }
+    if (!sameParent.unwrap()) {
+      return Some(127);
+    }
+#else
+    return Some(127);
+#endif
+    EnsureBrowserCommandlineSafe(argc, argv);
     return Nothing();
+  }
+
+  if (!denbrowser::IsAllowedBrowserCommandLine(argc, argv)) {
+    return Some(127);
+  }
+
+  EnsureBrowserCommandlineSafe(argc, argv);
+  if (!SetArgv0ToFullBinaryPath(argv)) {
+    HandleLauncherError(LAUNCHER_ERROR_GENERIC());
+    return Some(127);
+  }
+
+  std::wstring applicationDirectory;
+  if (!DenBrowserGetApplicationDirectory(argv[0], applicationDirectory)) {
+    return Some(127);
+  }
+
+  DenBrowserEnvironment currentEnvironment;
+  if (!DenBrowserBuildEnvironment(nullptr, applicationDirectory,
+                                  currentEnvironment) ||
+      !DenBrowserApplyCurrentEnvironment(currentEnvironment)) {
+    return Some(127);
   }
 
   // Called from the launcher process *and* the browser process.
   EnablePreferLoadFromSystem32IfCompatible();
+
+  if (authorizedBrowser) {
+    return Nothing();
+  }
+
+  // The marker is created only after the public/restart grammar and caller
+  // environment have been validated. It is consumed by the existing launcher
+  // role selection below and is never copied into the browser environment.
+  if (_putenv_s("MOZ_LAUNCHER_PROCESS", "1") ||
+      !::SetEnvironmentVariableW(L"MOZ_LAUNCHER_PROCESS", L"1")) {
+    return Some(127);
+  }
 
 #if defined(MOZ_LAUNCHER_PROCESS)
   LauncherRegistryInfo regInfo;
@@ -383,14 +640,7 @@ Maybe<int> LauncherMain(int& argc, wchar_t* argv[]) {
   Maybe<std::wstring> blocklistFileName = Nothing();
 #endif  // defined(MOZ_LAUNCHER_PROCESS)
   if (!runAsLauncher || !runAsLauncher.value()) {
-#if defined(MOZ_LAUNCHER_PROCESS)
-    // Update the registry as Browser
-    LauncherVoidResult commitResult = regInfo.Commit();
-    if (commitResult.isErr()) {
-      mozilla::HandleLauncherError(commitResult);
-    }
-#endif  // defined(MOZ_LAUNCHER_PROCESS)
-    return Nothing();
+    return Some(127);
   }
 
 #if defined(MOZ_SANDBOX)
@@ -400,11 +650,6 @@ Maybe<int> LauncherMain(int& argc, wchar_t* argv[]) {
 
   mozilla::UseParentConsole();
 
-  if (!SetArgv0ToFullBinaryPath(argv)) {
-    HandleLauncherError(LAUNCHER_ERROR_GENERIC());
-    return Nothing();
-  }
-
   LauncherFlags flags = ProcessCmdLine(argc, argv);
 
   nsAutoHandle mediumIlToken;
@@ -412,53 +657,20 @@ Maybe<int> LauncherMain(int& argc, wchar_t* argv[]) {
       GetElevationState(argv[0], flags, mediumIlToken);
   if (elevationState.isErr()) {
     HandleLauncherError(elevationState);
-    return Nothing();
+    return Some(127);
   }
 
-  // Distill deelevation status, and/or attempt to perform launcher deelevation
-  // via an indirect relaunch.
+  // Shell-based de-elevation cannot carry the launch authorization. A normal
+  // user launch proceeds; a directly available medium-integrity token is used
+  // when possible; otherwise an elevated launch fails closed.
   DeelevationStatus deelevationStatus = DeelevationStatus::Unknown;
   if (mediumIlToken.get()) {
-    // Rather than indirectly relaunch the launcher, we'll attempt to directly
-    // launch the main process with a reduced-privilege security token.
     deelevationStatus = DeelevationStatus::PartiallyDeelevated;
-  } else if (elevationState.unwrap() == ElevationState::eElevated) {
-    if (flags & LauncherFlags::eWaitForBrowser) {
-      // An indirect relaunch won't provide a process-handle to block on,
-      // so we have to continue onwards with this process.
-      deelevationStatus = DeelevationStatus::DeelevationProhibited;
-    } else if (flags & LauncherFlags::eNoDeelevate) {
-      // Our invoker (hopefully, the user) has explicitly requested that the
-      // launcher not deelevate itself.
-      deelevationStatus = DeelevationStatus::DeelevationProhibited;
-    } else if (flags & LauncherFlags::eDeelevating) {
-      // We've already tried to deelevate, to no effect. Continue onward.
-      deelevationStatus = DeelevationStatus::UnsuccessfullyDeelevated;
-    } else {
-      // Otherwise, attempt to relaunch the launcher process itself via the
-      // shell, which hopefully will not be elevated. (But see bug 1733821.)
-      LauncherVoidResult launchedUnelevated = LaunchUnelevated(argc, argv);
-      if (launchedUnelevated.isErr()) {
-        // On failure, don't even try for a launcher process. Continue onwards
-        // in this one. (TODO: why? This isn't technically fatal...)
-        HandleLauncherError(launchedUnelevated);
-        return Nothing();
-      }
-      // Otherwise, tell our caller to exit with a success code.
-      return Some(0);
-    }
   } else if (elevationState.unwrap() == ElevationState::eNormalUser) {
-    if (flags & LauncherFlags::eDeelevating) {
-      // Deelevation appears to have been successful!
-      deelevationStatus = DeelevationStatus::SuccessfullyDeelevated;
-    } else {
-      // We haven't done anything and we don't need to.
-      deelevationStatus = DeelevationStatus::StartedUnprivileged;
-    }
+    deelevationStatus = DeelevationStatus::StartedUnprivileged;
   } else {
-    // Some other elevation state with no medium-integrity token.
-    // (This should probably not happen.)
-    deelevationStatus = DeelevationStatus::Unknown;
+    HandleLauncherError(LAUNCHER_ERROR_FROM_WIN32(ERROR_ELEVATION_REQUIRED));
+    return Some(127);
   }
 
 #if defined(MOZ_LAUNCHER_PROCESS)
@@ -466,7 +678,7 @@ Maybe<int> LauncherMain(int& argc, wchar_t* argv[]) {
   LauncherVoidResult commitResult = regInfo.Commit();
   if (commitResult.isErr()) {
     mozilla::HandleLauncherError(commitResult);
-    return Nothing();
+    return Some(127);
   }
 #endif  // defined(MOZ_LAUNCHER_PROCESS)
 
@@ -474,24 +686,18 @@ Maybe<int> LauncherMain(int& argc, wchar_t* argv[]) {
   UniquePtr<wchar_t[]> cmdLine(MakeCommandLine(argc, argv));
   if (!cmdLine) {
     HandleLauncherError(LAUNCHER_ERROR_GENERIC());
-    return Nothing();
+    return Some(127);
   }
 
   const Maybe<bool> isSafeMode =
       IsSafeModeRequested(argc, argv, SafeModeFlag::NoKeyPressCheck);
   if (!isSafeMode) {
     HandleLauncherError(LAUNCHER_ERROR_FROM_WIN32(ERROR_INVALID_PARAMETER));
-    return Nothing();
+    return Some(127);
   }
 
   ProcThreadAttributes attrs;
   SetMitigationPolicies(attrs, isSafeMode.value());
-
-  HANDLE stdHandles[] = {::GetStdHandle(STD_INPUT_HANDLE),
-                         ::GetStdHandle(STD_OUTPUT_HANDLE),
-                         ::GetStdHandle(STD_ERROR_HANDLE)};
-
-  attrs.AddInheritableHandles(stdHandles);
 
   DWORD creationFlags = CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT;
 
@@ -499,24 +705,11 @@ Maybe<int> LauncherMain(int& argc, wchar_t* argv[]) {
   LauncherResult<bool> attrsOk = attrs.AssignTo(siex);
   if (attrsOk.isErr()) {
     HandleLauncherError(attrsOk);
-    return Nothing();
+    return Some(127);
   }
-
-  BOOL inheritHandles = FALSE;
 
   if (attrsOk.unwrap()) {
     creationFlags |= EXTENDED_STARTUPINFO_PRESENT;
-
-    if (attrs.HasInheritableHandles()) {
-      siex.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
-      siex.StartupInfo.hStdInput = stdHandles[0];
-      siex.StartupInfo.hStdOutput = stdHandles[1];
-      siex.StartupInfo.hStdError = stdHandles[2];
-
-      // Since attrsOk == true, we have successfully set the handle inheritance
-      // whitelist policy, so only the handles added to attrs will be inherited.
-      inheritHandles = TRUE;
-    }
   }
 
   // Pass on the path of the shortcut used to launch this process, if any.
@@ -531,20 +724,32 @@ Maybe<int> LauncherMain(int& argc, wchar_t* argv[]) {
   PROCESS_INFORMATION pi = {};
   BOOL createOk;
 
+  DenBrowserEnvironment browserEnvironment;
+  if (!DenBrowserBuildEnvironment(mediumIlToken.get(), applicationDirectory,
+                                  browserEnvironment)) {
+    return Some(127);
+  }
+  UniquePtr<wchar_t[]> environmentBlock =
+      DenBrowserSerializeEnvironment(browserEnvironment);
+  if (!environmentBlock) {
+    return Some(127);
+  }
+
   if (mediumIlToken.get()) {
-    createOk =
-        ::CreateProcessAsUserW(mediumIlToken.get(), argv[0], cmdLine.get(),
-                               nullptr, nullptr, inheritHandles, creationFlags,
-                               nullptr, nullptr, &siex.StartupInfo, &pi);
+    createOk = ::CreateProcessAsUserW(
+        mediumIlToken.get(), argv[0], cmdLine.get(), nullptr, nullptr, FALSE,
+        creationFlags, environmentBlock.get(), applicationDirectory.c_str(),
+        &siex.StartupInfo, &pi);
   } else {
-    createOk = ::CreateProcessW(argv[0], cmdLine.get(), nullptr, nullptr,
-                                inheritHandles, creationFlags, nullptr, nullptr,
-                                &siex.StartupInfo, &pi);
+    createOk =
+        ::CreateProcessW(argv[0], cmdLine.get(), nullptr, nullptr, FALSE,
+                         creationFlags, environmentBlock.get(),
+                         applicationDirectory.c_str(), &siex.StartupInfo, &pi);
   }
 
   if (!createOk) {
     HandleLauncherError(LAUNCHER_ERROR_FROM_LAST());
-    return Nothing();
+    return Some(127);
   }
 
   nsAutoHandle process(pi.hProcess);
@@ -566,13 +771,13 @@ Maybe<int> LauncherMain(int& argc, wchar_t* argv[]) {
   if (setupResult.isErr()) {
     HandleLauncherError(setupResult);
     ::TerminateProcess(process.get(), 1);
-    return Nothing();
+    return Some(127);
   }
 
   if (::ResumeThread(mainThread.get()) == static_cast<DWORD>(-1)) {
     HandleLauncherError(LAUNCHER_ERROR_FROM_LAST());
     ::TerminateProcess(process.get(), 1);
-    return Nothing();
+    return Some(127);
   }
 
   if (flags & LauncherFlags::eWaitForBrowser) {
