@@ -521,6 +521,11 @@ already_AddRefed<Promise> MediaDevices::GetDisplayMedia(
     return nullptr;
   }
   nsCOMPtr<nsPIDOMWindowInner> owner = do_QueryInterface(global);
+  // DenBrowser: getDisplayMedia() unconditionally rejected; screen capture is
+  // disabled by policy regardless of prefs or caller privilege.
+  p->MaybeRejectWithNotAllowedError(
+      "DenBrowser policy: screen capture is disabled");
+  return p.forget();
   /* If the relevant global object of this does not have transient activation,
    * return a promise rejected with a DOMException object whose name attribute
    * has the value InvalidStateError. */
