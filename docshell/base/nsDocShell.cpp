@@ -4,6 +4,8 @@
 
 #include "nsDocShell.h"
 
+#include "DenBrowserSiteFilter.h"
+
 #include <algorithm>
 #include "mozilla/CycleCollectedJSContext.h"
 #include "mozilla/dom/HTMLFormElement.h"
@@ -8504,6 +8506,21 @@ nsresult nsDocShell::InternalLoad(nsDocShellLoadState* aLoadState,
       "Load must be targeting this BrowsingContext");
 
   MOZ_TRY(CheckDisallowedJavascriptLoad(aLoadState));
+
+  // DenBrowser: apply compile-time site filter.  Return NS_ERROR_BLOCKED_BY_POLICY
+  // so docshell maps it to the "Blocked Page" neterror (the message string is
+  // overridden in appstrings.properties below).  Call DisplayLoadError directly
+  // because InternalLoad returns BEFORE opening a channel — without an explicit
+  // call, no channel reaches OnStop and the error page never renders; the tab
+  // just sits on the previous content.
+  if (!denbrowser::SiteAllowed(aLoadState->URI())) {
+    MOZ_LOG(gDocShellLeakLog, LogLevel::Warning,
+            ("DOCSHELL %p blocked navigation to %s by DenBrowser site filter\n",
+             this, aLoadState->URI()->GetSpecOrDefault().get()));
+    DisplayLoadError(NS_ERROR_BLOCKED_BY_POLICY, aLoadState->URI(), nullptr,
+                     nullptr);
+    return NS_ERROR_BLOCKED_BY_POLICY;
+  }
 
   // If we don't have a target, we're loading into ourselves, and our load
   // delegate may want to intercept that load.
