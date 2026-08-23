@@ -7,6 +7,7 @@ DisableStlWrapping()
 GeckoCppUnitTests(
     [
         "TestCrossProcessWin",
+        "TestDenBrowserLaunchPolicy",
         "TestSafeThreadLocal",
         "TestSameBinary",
     ],
