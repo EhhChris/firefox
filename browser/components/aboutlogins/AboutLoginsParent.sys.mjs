@@ -96,6 +96,10 @@ export class AboutLoginsParent extends JSWindowActorParent {
     AboutLogins.subscribers.add(this.browsingContext);
 
     switch (message.name) {
+      case "AboutLogins:CopyBlocked": {
+        this.#notifyDenBrowserCopyBlocked();
+        break;
+      }
       case "AboutLogins:CreateLogin": {
         await this.#createLogin(message.data.login);
         break;
@@ -160,6 +164,18 @@ export class AboutLoginsParent extends JSWindowActorParent {
 
   get #documentGlobal() {
     return this.browsingContext.embedderElement?.documentGlobal;
+  }
+
+  #notifyDenBrowserCopyBlocked() {
+    let browser = this.browsingContext.top?.embedderElement;
+    if (!browser?.isConnected || !browser.documentGlobal) {
+      return;
+    }
+    browser.dispatchEvent(
+      new browser.documentGlobal.CustomEvent("DenBrowserCopyBlocked", {
+        bubbles: true,
+      })
+    );
   }
 
   async #createLogin(newLogin) {
