@@ -2465,6 +2465,8 @@ export var PlacesUtils = {
       if (hasKeyword) {
         keywordOrEntry.keyword = keywordOrEntry.keyword.trim().toLowerCase();
       }
+      // DenBrowser: profile-backed bookmark keywords are disabled.
+      return Promise.resolve(null);
       /** @type {(entry: KeywordEntry) => void} */
       let safeOnResult = entry => {
         if (onResult) {
@@ -2559,6 +2561,10 @@ export var PlacesUtils = {
         throw new Error(url + " is not a valid URL");
       }
 
+      // DenBrowser: bookmark keywords are disabled.
+      return Promise.reject(
+        new Error("DenBrowser: bookmark keywords are disabled.")
+      );
       return PlacesUtils.withConnectionWrapper(
         "PlacesUtils.keywords.insert",
         async db => {
@@ -2921,6 +2927,8 @@ export var PlacesUtils = {
      *  Whether the given word is a keyword.
      */
     isKeywordFromCache(keyword) {
+      // DenBrowser: profile-backed bookmark keywords are disabled.
+      return false;
       return this._cache?.has(keyword);
     },
   },

@@ -67,6 +67,12 @@ const DENBROWSER_BLOCKED_NOTIFICATION_DETAILS = new Map([
       l10nId: "denbrowser-devtools-blocked-infobar",
     },
   ],
+  [
+    "DenBrowserBookmarkletBlocked",
+    {
+      l10nId: "denbrowser-bookmarklet-blocked-infobar",
+    },
+  ],
 ]);
 const gDenBrowserBlockedNotificationStates = new WeakMap();
 
@@ -506,6 +512,10 @@ var gBrowserInit = {
     );
     document.addEventListener(
       "DenBrowserDevToolsBlocked",
+      queueDenBrowserBlockedNotification
+    );
+    document.addEventListener(
+      "DenBrowserBookmarkletBlocked",
       queueDenBrowserBlockedNotification
     );
 
