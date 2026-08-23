@@ -646,22 +646,30 @@ export var PlacesUIUtils = {
   },
 
   /**
-   * Allows opening of javascript/data URI only if the given node is
-   * bookmarked (see bug 224521).
+   * Blocks javascript: nodes and unbookmarked data: nodes.
    *
    * @param {object} aURINode
    *        a URI node
    * @param {Window} aWindow
-   *        a window on which a potential error alert is shown on.
+   *        The calling window, used for refusal feedback.
    * @returns {boolean} true if it's safe to open the node in the browser, false otherwise.
    */
   checkURLSecurity(aURINode, aWindow) {
-    if (lazy.PlacesUtils.nodeIsBookmark(aURINode)) {
-      return true;
-    }
-
     var uri = Services.io.newURI(aURINode.uri);
-    if (uri.schemeIs("javascript") || uri.schemeIs("data")) {
+    let isJavaScriptURL = uri.schemeIs("javascript");
+    if (
+      isJavaScriptURL ||
+      (uri.schemeIs("data") && !lazy.PlacesUtils.nodeIsBookmark(aURINode))
+    ) {
+      let browser = isJavaScriptURL && aWindow?.gBrowser?.selectedBrowser;
+      if (browser?.localName == "browser" && browser.isConnected) {
+        browser.dispatchEvent(
+          new aWindow.CustomEvent("DenBrowserBookmarkletBlocked", {
+            bubbles: true,
+          })
+        );
+        return false;
+      }
       const [title, errorStr] =
         PlacesUIUtils.promptLocalization.formatValuesSync([
           "places-error-title",
