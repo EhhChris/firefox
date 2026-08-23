@@ -75,13 +75,6 @@ XPCOMUtils.defineLazyServiceGetter(
   Ci.nsIURLQueryStringStripper
 );
 
-XPCOMUtils.defineLazyServiceGetter(
-  lazy,
-  "clipboard",
-  "@mozilla.org/widget/clipboardhelper;1",
-  Ci.nsIClipboardHelper
-);
-
 XPCOMUtils.defineLazyPreferenceGetter(
   lazy,
   "TEXT_FRAGMENTS_ENABLED",
@@ -1725,10 +1718,22 @@ export class nsContextMenu {
     return this.actor.canvasToBlobURL(targetIdentifier);
   }
 
+  _notifyDenBrowserCopyBlocked() {
+    let browser = this.browser;
+    if (browser?.localName != "browser" || !browser.isConnected) {
+      return;
+    }
+    browser.dispatchEvent(
+      new this.window.CustomEvent("DenBrowserCopyBlocked", { bubbles: true })
+    );
+  }
+
+  copyImage() {
+    this._notifyDenBrowserCopyBlocked();
+  }
+
   copyCanvasImage() {
-    this.actor.copyCanvasImage(this.targetIdentifier).then(arrayBuffer => {
-      lazy.BrowserUtils.copyImageToClipboard(arrayBuffer);
-    }, console.error);
+    this.copyImage();
   }
 
   // Change current window to the URL of the image, video, or audio.
@@ -2211,57 +2216,16 @@ export class nsContextMenu {
 
   // Generate email address and put it on clipboard.
   copyEmail() {
-    // Copy the comma-separated list of email addresses only.
-    // There are other ways of embedding email addresses in a mailto:
-    // link, but such complex parsing is beyond us.
-    var url = this.linkURL;
-    var qmark = url.indexOf("?");
-    var addresses;
-
-    // 7 == length of "mailto:"
-    addresses = qmark > 7 ? url.substring(7, qmark) : url.substr(7);
-
-    // Let's try to unescape it using a character set
-    // in case the address is not ASCII.
-    try {
-      addresses = Services.textToSubURI.unEscapeURIForUI(addresses);
-    } catch (ex) {
-      // Do nothing.
-    }
-
-    lazy.clipboard.copyString(
-      addresses,
-      this.actor.manager.browsingContext.currentWindowGlobal
-    );
+    this._notifyDenBrowserCopyBlocked();
   }
 
   // Extract phone and put it on clipboard
   copyPhone() {
-    // Copies the phone number only. We won't be doing any complex parsing
-    var url = this.linkURL;
-    var phone = url.substr(4);
-
-    // Let's try to unescape it using a character set
-    // in case the phone number is not ASCII.
-    try {
-      phone = Services.textToSubURI.unEscapeURIForUI(phone);
-    } catch (ex) {
-      // Do nothing.
-    }
-
-    lazy.clipboard.copyString(
-      phone,
-      this.actor.manager.browsingContext.currentWindowGlobal
-    );
+    this._notifyDenBrowserCopyBlocked();
   }
 
-  copyLink(url = this.linkURL) {
-    // If we're in a view source tab, remove the view-source: prefix
-    let linkURL = url.replace(/^view-source:/, "");
-    lazy.clipboard.copyString(
-      linkURL,
-      this.actor.manager.browsingContext.currentWindowGlobal
-    );
+  copyLink() {
+    this._notifyDenBrowserCopyBlocked();
   }
 
   previewLink(url = this.linkURL) {
@@ -2275,16 +2239,8 @@ export class nsContextMenu {
    * 'Stripped' means that query parameters for tracking/ link decoration
    * that are known to us will be removed from the URI.
    */
-  copyStrippedLink(uri = this.linkURI) {
-    let strippedLinkURI = this.getStrippedLink(uri);
-    let strippedLinkURL =
-      Services.io.createExposableURI(strippedLinkURI)?.displaySpec;
-    if (strippedLinkURL) {
-      lazy.clipboard.copyString(
-        strippedLinkURL,
-        this.actor.manager.browsingContext.currentWindowGlobal
-      );
-    }
+  copyStrippedLink() {
+    this._notifyDenBrowserCopyBlocked();
   }
 
   async addSearchFieldAsEngine() {
@@ -2563,10 +2519,7 @@ export class nsContextMenu {
   }
 
   copyMediaLocation() {
-    lazy.clipboard.copyString(
-      this.originalMediaURL,
-      this.actor.manager.browsingContext.currentWindowGlobal
-    );
+    this._notifyDenBrowserCopyBlocked();
   }
 
   getImageText() {

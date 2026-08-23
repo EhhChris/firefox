@@ -4,17 +4,6 @@
 
 import { LoginHelper } from "resource://gre/modules/LoginHelper.sys.mjs";
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
-const lazy = {};
-
-XPCOMUtils.defineLazyServiceGetter(
-  lazy,
-  "ClipboardHelper",
-  "@mozilla.org/widget/clipboardhelper;1",
-  Ci.nsIClipboardHelper
-);
-
 const TELEMETRY_MIN_MS_BETWEEN_OPEN_MANAGEMENT = 5000;
 
 let gLastOpenManagementBrowserId = null;
@@ -45,7 +34,7 @@ export class AboutLoginsChild extends JSWindowActorChild {
         break;
       }
       case "AboutLoginsCopyLoginDetail": {
-        this.#aboutLoginsCopyLoginDetail(event.detail);
+        this.#aboutLoginsCopyLoginDetail();
         break;
       }
       case "AboutLoginsCreateLogin": {
@@ -153,12 +142,8 @@ export class AboutLoginsChild extends JSWindowActorChild {
     this.sendAsyncMessage("AboutLogins:ImportReportInit");
   }
 
-  #aboutLoginsCopyLoginDetail(detail) {
-    lazy.ClipboardHelper.copyString(
-      detail,
-      this.windowContext,
-      lazy.ClipboardHelper.Sensitive
-    );
+  #aboutLoginsCopyLoginDetail() {
+    this.sendAsyncMessage("AboutLogins:CopyBlocked");
   }
 
   #aboutLoginsCreateLogin(login) {

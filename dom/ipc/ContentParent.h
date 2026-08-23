@@ -973,7 +973,8 @@ class ContentParent final : public PContentParent,
   mozilla::ipc::IPCResult RecvSetClipboard(
       const IPCTransferable& aTransferable,
       const nsIClipboard::ClipboardType& aWhichClipboard,
-      const MaybeDiscarded<WindowContext>& aRequestingWindowContext);
+      const MaybeDiscarded<WindowContext>& aRequestingWindowContext,
+      bool aHasValidTransientUserGestureActivation);
 
   template <typename GetClipboardDataFunction>
   nsresult GetClipboardDataInternal(
@@ -1001,6 +1002,11 @@ class ContentParent final : public PContentParent,
   mozilla::ipc::IPCResult RecvClipboardHasType(
       nsTArray<nsCString>&& aTypes,
       const nsIClipboard::ClipboardType& aWhichClipboard, bool* aHasType);
+
+  // DenBrowser cross-process internal clipboard.
+  mozilla::ipc::IPCResult RecvSetDenInternalClipboard(const nsString& aText);
+  mozilla::ipc::IPCResult RecvGetDenInternalClipboard(nsString* aText,
+                                                      bool* aHasData);
 
   mozilla::ipc::IPCResult RecvGetClipboardDataSnapshot(
       nsTArray<nsCString>&& aTypes,

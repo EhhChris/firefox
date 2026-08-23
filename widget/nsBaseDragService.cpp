@@ -25,6 +25,7 @@
 #include "nsXULPopupManager.h"
 #include "nsMenuPopupFrame.h"
 #include "nsTreeBodyFrame.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
@@ -404,8 +405,29 @@ nsresult nsBaseDragSession::InvokeDragSession(
     }
   }
 
-  nsresult rv =
-      InvokeDragSessionImpl(aWidget, aTransferableArray, mRegion, aActionType);
+  // DenBrowser: permit only trusted browser tab transport. Content, URL-bar,
+  // and other chrome drags remain blocked before the native drag service can
+  // expose data outside the browser. Route blocked attempts through Firefox's
+  // normal failure cleanup below so dragend fires and the registered drag
+  // session cannot remain stuck. Remote content drags carry mDragStartData and
+  // must not inherit the system principal of their parent <browser> element.
+  const bool isInternalBrowserTabDrag =
+      !mDragStartData && mSourceNode->NodePrincipal()->IsSystemPrincipal() &&
+      mDataTransfer &&
+      mDataTransfer->HasType(u"application/x-moz-tabbrowser-tab"_ns);
+  nsCOMPtr<nsIDragService> dragService =
+      do_GetService("@mozilla.org/widget/dragservice;1");
+  // Content-process automation sends its data over IPC to the mock service in
+  // the parent. The parent may proceed only when that mock is actually active,
+  // so tests cannot accidentally enter the platform's native drag loop.
+  const bool isAutomationTestDrag =
+      xpc::IsInAutomation() &&
+      (XRE_IsContentProcess() ||
+       (dragService && dragService->GetIsMockService()));
+  nsresult rv = isInternalBrowserTabDrag || isAutomationTestDrag
+                    ? InvokeDragSessionImpl(aWidget, aTransferableArray,
+                                            mRegion, aActionType)
+                    : NS_ERROR_ABORT;
 
   if (NS_FAILED(rv)) {
     // Set mDoingDrag so that EndDragSession cleans up and sends the dragend
