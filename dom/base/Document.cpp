@@ -5614,6 +5614,19 @@ bool Document::ExecCommand(const nsAString& aHTMLCommandName, bool aShowUI,
     return false;
   }
 
+  // DenBrowser: block clipboard commands from web content. User-activated
+  // copy/cut calls get the same non-modal feedback as native copy commands;
+  // the activation gate prevents script-generated notification spam.
+  const bool isCut = aHTMLCommandName.LowerCaseEqualsLiteral("cut");
+  const bool isCopy = aHTMLCommandName.LowerCaseEqualsLiteral("copy");
+  if ((isCut || isCopy) && HasValidTransientUserGestureActivation()) {
+    nsContentUtils::DispatchEventOnlyToChrome(this, this,
+                                              u"DenBrowserCopyBlocked"_ns,
+                                              CanBubble::eYes, Cancelable::eNo);
+  }
+  if (isCut || isCopy || aHTMLCommandName.LowerCaseEqualsLiteral("paste")) {
+    return false;
+  }
   //  for optional parameters see dom/src/base/nsHistory.cpp: HistoryImpl::Go()
   //  this might add some ugly JS dependencies?
 
