@@ -1318,6 +1318,13 @@ restore-session-startup-suggestion-button = Show me how
 
 filepicker-blocked-infobar = Your organization has blocked access to local files on this computer
 
+## Non-modal feedback for DenBrowser's source-level action blocks
+
+denbrowser-saving-blocked-infobar = Saving files is not available in this browser.
+denbrowser-printing-blocked-infobar = Printing is not available in this browser.
+denbrowser-copying-blocked-infobar = Copying is not available for this site.
+denbrowser-devtools-blocked-infobar = Developer tools are not available in this browser.
+
 ## Mozilla data reporting notification (Telemetry, Firefox Health Report, etc)
 
 data-reporting-notification-message = { -brand-short-name } automatically sends some data to { -vendor-short-name } so that we can improve your experience.

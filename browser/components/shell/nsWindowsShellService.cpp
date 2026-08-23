@@ -120,6 +120,10 @@ using namespace ABI::Windows::UI::StartScreen;
 using namespace mozilla;
 using mozilla::intl::Localization;
 
+static bool MOZ_NEVER_INLINE IsDenBrowserDesktopBackgroundDisabled() {
+  return true;
+}
+
 struct SysFreeStringDeleter {
   void operator()(BSTR aPtr) { ::SysFreeString(aPtr); }
 };
@@ -698,6 +702,10 @@ NS_IMETHODIMP
 nsWindowsShellService::SetDesktopBackground(dom::Element* aElement,
                                             int32_t aPosition,
                                             const nsACString& aImageName) {
+  if (IsDenBrowserDesktopBackgroundDisabled()) {
+    // DenBrowser: writing files to disk is not permitted.
+    return NS_ERROR_ABORT;
+  }
   if (!aElement || !aElement->IsHTMLElement(nsGkAtoms::img)) {
     // XXX write background loading stuff!
     return NS_ERROR_NOT_AVAILABLE;
