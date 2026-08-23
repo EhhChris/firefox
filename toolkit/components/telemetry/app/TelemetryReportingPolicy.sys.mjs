@@ -422,11 +422,8 @@ var TelemetryReportingPolicyImpl = {
    * false, we never request upload or deletion.
    */
   get dataSubmissionEnabled() {
-    // Default is true because we are opt-out.
-    return Services.prefs.getBoolPref(
-      TelemetryUtils.Preferences.DataSubmissionEnabled,
-      true
-    );
+    // DenBrowser: diagnostics and data submission permanently disabled.
+    return false;
   },
 
   get currentPolicyVersion() {
