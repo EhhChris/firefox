@@ -8,6 +8,7 @@ GeckoCppUnitTests(
     [
         "TestCrossProcessWin",
         "TestDenBrowserLaunchPolicy",
+        "TestDenBrowserProcessSecurity",
         "TestSafeThreadLocal",
         "TestSameBinary",
     ],
@@ -19,6 +20,7 @@ LOCAL_INCLUDES += [
 ]
 
 OS_LIBS += [
+    "advapi32",
     "ntdll",
 ]
 
