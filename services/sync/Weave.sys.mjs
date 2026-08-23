@@ -140,10 +140,8 @@ WeaveService.prototype = {
    * For that, you'll want to check Weave.Status.checkSetup().
    */
   get enabled() {
-    return (
-      !!lazy.syncUsername &&
-      Services.prefs.getBoolPref("identity.fxaccounts.enabled")
-    );
+    // DenBrowser: Firefox Sync permanently disabled.
+    return false;
   },
 };
 
