@@ -81,6 +81,13 @@
   }
 }
 
+#denbrowserBuild {
+  opacity: 0.7;
+  user-select: text;
+  -moz-user-focus: normal;
+  cursor: text;
+}
+
 #distribution,
 #distributionId {
   display: none;
