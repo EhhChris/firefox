@@ -31,6 +31,7 @@
 #include "base/win/scoped_handle.h"
 #include "base/win/security_util.h"
 #include "base/win/startup_information.h"
+#include "mozilla/DenBrowserProcessSecurity.h"
 #include "sandbox/win/src/crosscall_client.h"
 #include "sandbox/win/src/crosscall_server.h"
 #include "sandbox/win/src/policy_low_level.h"
@@ -197,11 +198,15 @@ ResultCode TargetProcess::Create(
   }
 
   bool inherit_handles = startup_info_helper->ShouldInheritHandles();
+  mozilla::denbrowser::ProcessSecurityAttributes process_security;
+  if (!process_security) {
+    *win_error = process_security.LastError();
+    return SBOX_ERROR_CREATE_PROCESS;
+  }
+
   PROCESS_INFORMATION temp_process_info = {};
-  // Allow Token handle to be closed once this function completes.
-  auto lockdown_token = lockdown_token_.release();
-  if (!::CreateProcessAsUserW(lockdown_token.get(), exe_path, cmd_line.get(),
-                              nullptr,  // No security attribute.
+  if (!::CreateProcessAsUserW(lockdown_token_.get(), exe_path, cmd_line.get(),
+                              process_security.Get(),
                               nullptr,  // No thread attribute.
                               inherit_handles, flags,
                               new_env.empty() ? nullptr : std::data(new_env),
