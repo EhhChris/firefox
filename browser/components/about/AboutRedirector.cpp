@@ -138,6 +138,15 @@ static const RedirEntry kRedirMap[] = {
          nsIAboutModule::URI_MUST_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
          nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
          nsIAboutModule::IS_SECURE_CHROME_UI},
+    // DenBrowser: the custom new-tab shortcuts page. New tabs are routed here
+    // (see AboutNewTab.sys.mjs) because the activity-stream about:newtab page
+    // never initializes in this hardened, permanent-private-browsing build.
+    // Flags mirror about:privatebrowsing minus the privileged-about process:
+    // untrusted content, loaded in a normal child content process. The page is
+    // static HTML with no script, so ALLOW_SCRIPT is intentionally omitted.
+    {"denbrowserhome", "chrome://browser/content/denbrowser-newtab.html",
+     nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
+         nsIAboutModule::URI_MUST_LOAD_IN_CHILD},
 #ifdef MOZ_SELECTABLE_PROFILES
     {"profilemanager", "chrome://browser/content/profiles/profiles.html",
      nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI |
