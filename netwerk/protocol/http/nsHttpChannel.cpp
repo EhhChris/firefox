@@ -6,6 +6,7 @@
 #include "HttpLog.h"
 
 #include "DenBrowserAttest.h"
+#include "DenBrowserSiteFilter.h"
 #include <inttypes.h>
 
 #include "mozilla/ScopeExit.h"
@@ -7616,6 +7617,16 @@ nsHttpChannel::AsyncOpen(nsIStreamListener* aListener) {
   if (mCanceled) {
     ReleaseListeners();
     return NS_FAILED(mStatus) ? mStatus : NS_ERROR_FAILURE;
+  }
+
+  // DenBrowser: enforce the compile-time site policy for every HTTP channel,
+  // including subresources, fetch/XHR, WebSocket handshakes, and redirects.
+  // This runs before upload normalization and before any cache or network work.
+  if (!denbrowser::SiteAllowed(mURI)) {
+    LOG(("nsHttpChannel::AsyncOpen blocked %s by DenBrowser site filter\n",
+         mURI->GetSpecOrDefault().get()));
+    ReleaseListeners();
+    return NS_ERROR_BLOCKED_BY_POLICY;
   }
 
   if (MaybeWaitForUploadStreamNormalization(listener, nullptr)) {
