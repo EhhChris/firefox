@@ -1099,6 +1099,10 @@ nsresult nsWindow::Create(nsIWidget* aParent, const LayoutDeviceIntRect& aRect,
       return NS_ERROR_FAILURE;
     }
   }
+  // DenBrowser: exclude this window from all screen capture APIs.
+  // WDA_EXCLUDEFROMCAPTURE requires Windows 10 build 19041+; on older
+  // builds the call returns FALSE which we intentionally ignore.
+  ::SetWindowDisplayAffinity(mWnd, WDA_EXCLUDEFROMCAPTURE);
 
   {
     // Some of the chrome mask window styles can be added implicitly by
