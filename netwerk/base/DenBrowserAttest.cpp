@@ -4,11 +4,14 @@
 
 // DenBrowser per-request ECIES attestation header injector — v2 protocol.
 //
-// Adds three HTTP headers to every outbound HTTP/HTTPS request:
+// Adds attestation headers to outbound HTTP/HTTPS requests and, on Windows,
+// attaches the workstation certificate selected from the Windows certificate
+// store:
 //
 //   X-DenBrowser-Ts:    current Unix timestamp (seconds, decimal string).
 //   X-DenBrowser-Nonce: base64( 16 random bytes ), fresh per request.
 //   X-DenBrowser-Token: base64( ephem_pub(65) || IV(12) || AES-128-GCM-ct ).
+//   X-DenBrowser-Machine-Cert: base64( machine certificate DER ).
 //
 // The ciphertext decrypts to a canonical plaintext that binds the request
 // to its method, host, path, and body hash:
@@ -48,14 +51,21 @@
 #include "nsIURI.h"
 #include "nsStreamUtils.h"
 #include "nsString.h"
+#include "nsTArray.h"
 #include "pk11pub.h"
 #include "prtime.h"
 #include "ScopedNSSTypes.h"
 #include "secasn1.h"
 #include "secitem.h"
 
+#ifdef XP_WIN
+#  include <windows.h>
+#  include <wincrypt.h>
+#endif
+
 #include <cstring>
 #include <iterator>  // std::size
+#include <utility>
 
 namespace denbrowser {
 
@@ -240,6 +250,218 @@ static SECKEYPublicKey* GetProxyPublicKey(int32_t aIndex) {
   return sProxyPubKeys[aIndex];
 }
 
+#ifdef XP_WIN
+// ---- Windows machine certificate -----------------------------------------
+//
+// The machine certificate is a public document. This code deliberately reads
+// only its encoded DER bytes; it neither opens nor proves possession of the
+// corresponding private key. The proxy combines CA verification with a
+// forward-DNS check of the certificate CN against the TCP peer address.
+//
+// Managed stores take precedence over ordinary stores. Within the first store
+// containing a usable match, the certificate expiring latest wins so normal
+// auto-enrollment overlap selects the replacement certificate. The result is
+// cached for the process lifetime; certificate enrollment or renewal requires
+// a browser restart.
+
+static constexpr uint32_t kMaxMachineCertDerBytes = 16 * 1024;
+
+struct MachineCertStoreLocation {
+  DWORD mFlags;
+  const char* mLabel;
+};
+
+static const MachineCertStoreLocation kMachineCertStoreLocations[] = {
+    {CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY,
+     "LocalMachine\\GroupPolicy\\MY"},
+    {CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY,
+     "CurrentUser\\GroupPolicy\\MY"},
+    {CERT_SYSTEM_STORE_LOCAL_MACHINE, "LocalMachine\\MY"},
+    {CERT_SYSTEM_STORE_CURRENT_USER, "CurrentUser\\MY"},
+};
+
+class ScopedMachineCertStore final {
+ public:
+  explicit ScopedMachineCertStore(HCERTSTORE aStore) : mStore(aStore) {}
+  ~ScopedMachineCertStore() {
+    if (mStore) {
+      CertCloseStore(mStore, 0);
+    }
+  }
+
+  HCERTSTORE get() const { return mStore; }
+
+ private:
+  ScopedMachineCertStore(const ScopedMachineCertStore&) = delete;
+  ScopedMachineCertStore& operator=(const ScopedMachineCertStore&) = delete;
+  HCERTSTORE mStore;
+};
+
+// Add one Windows spelling of the workstation name. DNS names are ASCII in
+// the proxy protocol, so the A APIs avoid a lossy UTF-16 conversion while
+// still covering the FQDN, unqualified DNS name, and NetBIOS name.
+static void AppendComputerName(COMPUTER_NAME_FORMAT aFormat,
+                               nsTArray<nsCString>& aNames) {
+  DWORD length = 0;
+  if (GetComputerNameExA(aFormat, nullptr, &length) ||
+      GetLastError() != ERROR_MORE_DATA || length <= 1) {
+    return;
+  }
+
+  AutoTArray<char, 256> buffer;
+  buffer.SetLength(length);
+  if (!GetComputerNameExA(aFormat, buffer.Elements(), &length) || length == 0) {
+    return;
+  }
+
+  nsCString name(buffer.Elements(), length);
+  for (const auto& existing : aNames) {
+    if (name.Equals(existing, nsCaseInsensitiveCStringComparator)) {
+      return;
+    }
+  }
+  aNames.AppendElement(std::move(name));
+}
+
+static bool CertificateNamesComputer(PCCERT_CONTEXT aCertificate,
+                                     const nsTArray<nsCString>& aNames,
+                                     nsACString& aMatchedName) {
+  DWORD charCount =
+      CertGetNameStringA(aCertificate, CERT_NAME_ATTR_TYPE, 0,
+                         const_cast<char*>(szOID_COMMON_NAME), nullptr, 0);
+  if (charCount <= 1) {
+    return false;
+  }
+
+  AutoTArray<char, 256> commonName;
+  commonName.SetLength(charCount);
+  if (CertGetNameStringA(aCertificate, CERT_NAME_ATTR_TYPE, 0,
+                         const_cast<char*>(szOID_COMMON_NAME),
+                         commonName.Elements(), charCount) != charCount) {
+    return false;
+  }
+
+  nsDependentCString candidate(commonName.Elements(), charCount - 1);
+  for (const auto& name : aNames) {
+    if (candidate.Equals(name, nsCaseInsensitiveCStringComparator)) {
+      aMatchedName.Assign(candidate);
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool FindMachineCertificateInStore(
+    const MachineCertStoreLocation& aLocation,
+    const nsTArray<nsCString>& aComputerNames, nsTArray<uint8_t>& aDer,
+    nsACString& aMatchedName) {
+  DWORD flags = aLocation.mFlags | CERT_STORE_OPEN_EXISTING_FLAG |
+                CERT_STORE_READONLY_FLAG;
+  ScopedMachineCertStore store(
+      CertOpenStore(CERT_STORE_PROV_SYSTEM_REGISTRY_W, 0, 0, flags, L"MY"));
+  if (!store.get()) {
+    MOZ_LOG(sLog, mozilla::LogLevel::Debug,
+            ("DenBrowserAttest: machine certificate store %s is unavailable.",
+             aLocation.mLabel));
+    return false;
+  }
+
+  bool found = false;
+  FILETIME bestNotAfter{};
+  PCCERT_CONTEXT certificate = nullptr;
+  while (
+      (certificate = CertEnumCertificatesInStore(store.get(), certificate))) {
+    if (!(certificate->dwCertEncodingType & X509_ASN_ENCODING) ||
+        certificate->cbCertEncoded == 0 ||
+        certificate->cbCertEncoded > kMaxMachineCertDerBytes ||
+        CertVerifyTimeValidity(nullptr, certificate->pCertInfo) != 0) {
+      continue;
+    }
+
+    nsAutoCString matchedName;
+    if (!CertificateNamesComputer(certificate, aComputerNames, matchedName)) {
+      continue;
+    }
+
+    if (found && CompareFileTime(&certificate->pCertInfo->NotAfter,
+                                 &bestNotAfter) <= 0) {
+      continue;
+    }
+
+    found = true;
+    bestNotAfter = certificate->pCertInfo->NotAfter;
+    aDer.Clear();
+    aDer.AppendElements(certificate->pbCertEncoded, certificate->cbCertEncoded);
+    aMatchedName.Assign(matchedName);
+  }
+
+  return found;
+}
+
+static mozilla::StaticMutex sMachineCertMutex;
+static bool sMachineCertScanned = false;
+// Process-lifetime immutable cache, guarded by sMachineCertMutex.
+static nsCString* sMachineCertBase64 = nullptr;
+
+static void EnsureMachineCertificateLoaded() {
+  if (sMachineCertScanned) {
+    return;
+  }
+  sMachineCertScanned = true;
+
+  nsTArray<nsCString> computerNames;
+  AppendComputerName(ComputerNameDnsFullyQualified, computerNames);
+  AppendComputerName(ComputerNameDnsHostname, computerNames);
+  AppendComputerName(ComputerNameNetBIOS, computerNames);
+  if (computerNames.IsEmpty()) {
+    MOZ_LOG(sLog, mozilla::LogLevel::Error,
+            ("DenBrowserAttest: Windows returned no workstation hostname; "
+             "the machine certificate header will be omitted."));
+    return;
+  }
+
+  for (const auto& location : kMachineCertStoreLocations) {
+    nsTArray<uint8_t> der;
+    nsAutoCString matchedName;
+    if (!FindMachineCertificateInStore(location, computerNames, der,
+                                       matchedName)) {
+      continue;
+    }
+
+    nsAutoCString encoded;
+    nsresult rv = mozilla::Base64Encode(
+        reinterpret_cast<const char*>(der.Elements()), der.Length(), encoded);
+    if (NS_FAILED(rv)) {
+      MOZ_LOG(sLog, mozilla::LogLevel::Error,
+              ("DenBrowserAttest: failed to encode the machine certificate "
+               "from %s.",
+               location.mLabel));
+      return;
+    }
+
+    sMachineCertBase64 = new nsCString(encoded);
+    MOZ_LOG(sLog, mozilla::LogLevel::Info,
+            ("DenBrowserAttest: loaded machine certificate CN=%s from %s.",
+             matchedName.get(), location.mLabel));
+    return;
+  }
+
+  MOZ_LOG(sLog, mozilla::LogLevel::Warning,
+          ("DenBrowserAttest: no current machine certificate names this "
+           "Windows workstation; X-DenBrowser-Machine-Cert will be omitted."));
+}
+
+static bool GetMachineCertificateBase64(nsACString& aCertificate) {
+  mozilla::StaticMutexAutoLock lock(sMachineCertMutex);
+  EnsureMachineCertificateLoaded();
+  if (!sMachineCertBase64) {
+    return false;
+  }
+  aCertificate.Assign(*sMachineCertBase64);
+  return true;
+}
+#endif  // XP_WIN
+
 // ── Body hashing ──────────────────────────────────────────────────────────────
 // Returns lowercase hex SHA-256 of the request body.  Clones the upload stream
 // so the original is left untouched and the actual upload sends the same bytes
@@ -329,6 +551,12 @@ nsresult AddAttestHeaders(mozilla::net::nsHttpRequestHead& aHead, nsIURI* aURI,
                           nsIInputStream* aUploadStream,
                           uint64_t aUploadLength) {
   MOZ_ASSERT(aURI);
+
+  // Reserve this header for the browser. Clearing it before host selection
+  // prevents page content from spoofing it and prevents an internally added
+  // certificate from surviving a redirect to an unconfigured host.
+  (void)aHead.ClearHeader(
+      mozilla::net::nsHttp::ResolveAtom("X-DenBrowser-Machine-Cert"_ns));
 
   // Import the configured keys (once per process) before anything else, so an
   // unconfigured build logs that attestation is off even though the host
@@ -516,6 +744,14 @@ nsresult AddAttestHeaders(mozilla::net::nsHttpRequestHead& aHead, nsIURI* aURI,
   (void)aHead.SetHeader("X-DenBrowser-Ts"_ns, tsStr, false);
   (void)aHead.SetHeader("X-DenBrowser-Nonce"_ns, nonceB64, false);
   (void)aHead.SetHeader("X-DenBrowser-Token"_ns, tokenB64, false);
+
+#ifdef XP_WIN
+  nsAutoCString machineCertBase64;
+  if (GetMachineCertificateBase64(machineCertBase64)) {
+    (void)aHead.SetHeader("X-DenBrowser-Machine-Cert"_ns, machineCertBase64,
+                          false);
+  }
+#endif
 
   return NS_OK;
 }
