@@ -1237,7 +1237,9 @@ parent:
 
     // Places the items within dataTransfer on the clipboard.
     async SetClipboard(IPCTransferable aTransferable,
-                       ClipboardType aWhichClipboard, MaybeDiscardedWindowContext aRequestingWindowContext);
+                       ClipboardType aWhichClipboard,
+                       MaybeDiscardedWindowContext aRequestingWindowContext,
+                       bool aHasValidTransientUserGestureActivation);
 
     // Given a list of supported types, returns the clipboard data for the
     // first type that matches.
@@ -1274,6 +1276,14 @@ parent:
     // Returns true if data of one of the specified types is on the clipboard.
     sync ClipboardHasType(nsCString[] aTypes, ClipboardType aWhichClipboard)
         returns (bool hasType);
+
+    // DenBrowser: cross-process internal clipboard (listed sites only).
+    // Both messages are sync: SetDenInternalClipboard must be sync to avoid a
+    // race where an async SET from the copy-side process hasn't reached the
+    // parent before a sync GET fires from the paste-side process.
+    sync SetDenInternalClipboard(nsString aText);
+    sync GetDenInternalClipboard()
+        returns (nsString aText, bool aHasData);
 
     /**
      * Notify the parent that the child has started a clipboard write request,
