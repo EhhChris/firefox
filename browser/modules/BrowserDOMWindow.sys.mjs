@@ -53,6 +53,22 @@ export class BrowserDOMWindow {
     this.win = win;
   }
 
+  #notifyDenBrowserPrintingBlocked(browsingContext = null) {
+    let browser =
+      browsingContext?.top?.embedderElement ||
+      this.win.gBrowser.selectedBrowser;
+    if (browser?.localName != "browser") {
+      return;
+    }
+
+    let chromeWindow = browser.documentGlobal;
+    browser.dispatchEvent(
+      new chromeWindow.CustomEvent("DenBrowserPrintingBlocked", {
+        bubbles: true,
+      })
+    );
+  }
+
   /**
    * @param {Window} win
    */
@@ -392,11 +408,9 @@ export class BrowserDOMWindow {
         break;
       }
       case Ci.nsIBrowserDOMWindow.OPEN_PRINT_BROWSER: {
-        let browser =
-          this.win.PrintUtils.handleStaticCloneCreatedForPrint(aOpenWindowInfo);
-        if (browser) {
-          browsingContext = browser.browsingContext;
-        }
+        // DenBrowser: stop the parent-side print-browser route before it can
+        // construct a preview browser or hand a BrowsingContext back to C++.
+        this.#notifyDenBrowserPrintingBlocked(aOpenWindowInfo?.parent);
         break;
       }
       default:
@@ -478,9 +492,8 @@ export class BrowserDOMWindow {
     aSkipLoad
   ) {
     if (aWhere == Ci.nsIBrowserDOMWindow.OPEN_PRINT_BROWSER) {
-      return this.win.PrintUtils.handleStaticCloneCreatedForPrint(
-        aParams.openWindowInfo
-      );
+      this.#notifyDenBrowserPrintingBlocked(aParams.openWindowInfo?.parent);
+      return null;
     }
 
     if (

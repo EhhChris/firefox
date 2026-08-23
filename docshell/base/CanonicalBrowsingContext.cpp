@@ -969,6 +969,8 @@ already_AddRefed<Promise> CanonicalBrowsingContext::PrintJS(
 
 RefPtr<PrintPromise> CanonicalBrowsingContext::Print(
     nsIPrintSettings* aPrintSettings) {
+  // DenBrowser: reject before content analysis, cloning, or print IPC state.
+  return PrintPromise::CreateAndReject(NS_ERROR_ABORT, __func__);
 #ifndef NS_PRINTING
   return PrintPromise::CreateAndReject(NS_ERROR_NOT_AVAILABLE, __func__);
 #else
@@ -1035,6 +1037,8 @@ void CanonicalBrowsingContext::ReleaseClonedPrint(
 RefPtr<PrintPromise> CanonicalBrowsingContext::PrintWithNoContentAnalysis(
     nsIPrintSettings* aPrintSettings, bool aForceStaticDocument,
     const MaybeDiscardedBrowsingContext& aCachedStaticDocument) {
+  // DenBrowser: also cover callers that intentionally bypass content analysis.
+  return PrintPromise::CreateAndReject(NS_ERROR_ABORT, __func__);
 #ifndef NS_PRINTING
   return PrintPromise::CreateAndReject(NS_ERROR_NOT_AVAILABLE, __func__);
 #else
