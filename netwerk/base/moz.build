@@ -127,6 +127,7 @@ XPIDL_MODULE = "necko"
 
 EXPORTS += [
     "DenBrowserAttest.h",
+    "DenBrowserSiteFilter.h",
     "netCore.h",
     "nsASocketHandler.h",
     "nsAsyncRedirectVerifyHelper.h",
