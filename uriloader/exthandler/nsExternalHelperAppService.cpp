@@ -51,6 +51,7 @@
 #include "nsOSHelperAppService.h"
 #include "nsOSHelperAppServiceChild.h"
 #include "nsContentSecurityUtils.h"
+#include "nsContentUtils.h"
 #include "nsUTF8Utils.h"
 #include "nsUnicodeProperties.h"
 
@@ -767,7 +768,25 @@ NS_IMETHODIMP nsExternalHelperAppService::CreateListener(
     nsIStreamListener** aStreamListener) {
   MOZ_ASSERT(!XRE_IsContentProcess());
   NS_ENSURE_ARG_POINTER(aChannel);
+  NS_ENSURE_ARG_POINTER(aStreamListener);
+  *aStreamListener = nullptr;
 
+  // DenBrowser: file downloads unconditionally blocked.
+  RefPtr<BrowsingContext> contentContext = aContentContext;
+  if (!contentContext) {
+    nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
+    if (loadInfo) {
+      contentContext = loadInfo->GetTargetBrowsingContext();
+    }
+  }
+  aChannel->Cancel(NS_ERROR_ABORT);
+  if (RefPtr<Element> topFrameElement =
+          contentContext ? contentContext->GetTopFrameElement() : nullptr) {
+    nsContentUtils::DispatchEventOnlyToChrome(
+        topFrameElement->OwnerDoc(), topFrameElement,
+        u"DenBrowserSaveBlocked"_ns, CanBubble::eYes, Cancelable::eNo);
+  }
+  return NS_ERROR_ABORT;
   nsAutoString fileName;
   nsAutoCString fileExtension;
   nsIHelperAppLauncherDialog::reason reason =
@@ -778,8 +797,6 @@ NS_IMETHODIMP nsExternalHelperAppService::CreateListener(
   if (contentDisposition == nsIChannel::DISPOSITION_ATTACHMENT) {
     reason = nsIHelperAppLauncherDialog::REASON_SERVERREQUEST;
   }
-
-  *aStreamListener = nullptr;
 
   // Get the file extension and name that we will need later
   nsCOMPtr<nsIURI> uri;
