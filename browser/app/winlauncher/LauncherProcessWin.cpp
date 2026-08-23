@@ -7,6 +7,7 @@
 
 #include "mozilla/CmdLineAndEnvUtils.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/DenBrowserProcessSecurity.h"
 #include "mozilla/glue/Debug.h"
 #include "mozilla/GeckoArgs.h"
 #include "mozilla/Maybe.h"
@@ -735,15 +736,21 @@ Maybe<int> LauncherMain(int& argc, wchar_t* argv[]) {
     return Some(127);
   }
 
+  mozilla::denbrowser::ProcessSecurityAttributes processSecurity;
+  if (!processSecurity) {
+    HandleLauncherError(LAUNCHER_ERROR_FROM_WIN32(processSecurity.LastError()));
+    return Some(127);
+  }
+
   if (mediumIlToken.get()) {
     createOk = ::CreateProcessAsUserW(
-        mediumIlToken.get(), argv[0], cmdLine.get(), nullptr, nullptr, FALSE,
-        creationFlags, environmentBlock.get(), applicationDirectory.c_str(),
-        &siex.StartupInfo, &pi);
+        mediumIlToken.get(), argv[0], cmdLine.get(), processSecurity.Get(),
+        nullptr, FALSE, creationFlags, environmentBlock.get(),
+        applicationDirectory.c_str(), &siex.StartupInfo, &pi);
   } else {
     createOk =
-        ::CreateProcessW(argv[0], cmdLine.get(), nullptr, nullptr, FALSE,
-                         creationFlags, environmentBlock.get(),
+        ::CreateProcessW(argv[0], cmdLine.get(), processSecurity.Get(), nullptr,
+                         FALSE, creationFlags, environmentBlock.get(),
                          applicationDirectory.c_str(), &siex.StartupInfo, &pi);
   }
 
