@@ -27,6 +27,22 @@ const TAB_HIDE_CONFIRMED_TYPE = "tabHideNotification";
 
 const TAB_ID_NONE = -1;
 
+const DENBROWSER_TABS_PRINTING_DISABLED = true;
+
+function notifyDenBrowserPrintingBlocked(tab) {
+  let browser = tab?.linkedBrowser;
+  if (browser?.localName != "browser") {
+    return;
+  }
+
+  let chromeWindow = browser.documentGlobal;
+  browser.dispatchEvent(
+    new chromeWindow.CustomEvent("DenBrowserPrintingBlocked", {
+      bubbles: true,
+    })
+  );
+}
+
 ChromeUtils.defineLazyGetter(this, "tabHidePopup", () => {
   return new ExtensionControlledPopup({
     confirmedType: TAB_HIDE_CONFIRMED_TYPE,
@@ -1397,6 +1413,12 @@ this.tabs = class extends ExtensionAPIPersistent {
 
         print() {
           let activeTab = getTabOrActive(null);
+          if (DENBROWSER_TABS_PRINTING_DISABLED) {
+            // This path must not depend on printUtils.js: production builds
+            // compile the printing component out entirely.
+            notifyDenBrowserPrintingBlocked(activeTab);
+            return;
+          }
           let { PrintUtils } = activeTab.documentGlobal;
           PrintUtils.startPrintWindow(activeTab.linkedBrowser.browsingContext);
         },
@@ -1408,6 +1430,11 @@ this.tabs = class extends ExtensionAPIPersistent {
 
         saveAsPDF(pageSettings) {
           let activeTab = getTabOrActive(null);
+          if (DENBROWSER_TABS_PRINTING_DISABLED) {
+            notifyDenBrowserPrintingBlocked(activeTab);
+            return Promise.resolve("not_saved");
+          }
+
           let picker = Cc["@mozilla.org/filepicker;1"].createInstance(
             Ci.nsIFilePicker
           );

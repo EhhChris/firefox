@@ -536,6 +536,20 @@ let JSWINDOWACTORS = {
     },
     allFrames: true,
   },
+
+  DenBrowserPrinting: {
+    parent: {
+      esModuleURI: "resource://gre/actors/DenBrowserPrintingParent.sys.mjs",
+    },
+    child: {
+      esModuleURI: "resource://gre/actors/DenBrowserPrintingChild.sys.mjs",
+      events: {
+        DenBrowserPrintingBlocked: { capture: true },
+      },
+    },
+    allFrames: true,
+  },
+
   Printing: {
     parent: {
       esModuleURI: "resource://gre/actors/PrintingParent.sys.mjs",

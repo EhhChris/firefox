@@ -51,17 +51,13 @@ document.addEventListener(
             MailIntegration.sendLinkForBrowser(gBrowser.selectedBrowser);
             break;
           case "cmd_pageSetup":
-            PrintUtils.showPageSetup();
+            window.notifyDenBrowserPrintingBlocked();
             break;
           case "cmd_print":
-            PrintUtils.startPrintWindow(
-              gBrowser.selectedBrowser.browsingContext
-            );
+            window.notifyDenBrowserPrintingBlocked();
             break;
           case "cmd_printPreviewToggle":
-            PrintUtils.togglePrintPreview(
-              gBrowser.selectedBrowser.browsingContext
-            );
+            window.notifyDenBrowserPrintingBlocked();
             break;
           case "cmd_file_importFromAnotherBrowser":
             MigrationUtils.showMigrationWizard(window, {

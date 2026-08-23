@@ -145,10 +145,8 @@ UNIFIED_SOURCES += [
     "MozLogSupport.cpp",
     "nsAppShell.cpp",
     "nsClipboard.cpp",
-    "nsDeviceContextAndroid.cpp",
     "nsDragService.cpp",
     "nsLookAndFeel.cpp",
-    "nsPrintSettingsServiceAndroid.cpp",
     "nsUserIdleServiceAndroid.cpp",
     "nsWidgetFactory.cpp",
     "nsWindow.cpp",
@@ -156,6 +154,12 @@ UNIFIED_SOURCES += [
     "ScreenHelperAndroid.cpp",
     "WebExecutorSupport.cpp",
 ]
+
+if CONFIG["NS_PRINTING"]:
+    UNIFIED_SOURCES += [
+        "nsDeviceContextAndroid.cpp",
+        "nsPrintSettingsServiceAndroid.cpp",
+    ]
 
 XPCOM_MANIFESTS += [
     "components.conf",

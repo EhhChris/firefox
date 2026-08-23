@@ -237,18 +237,9 @@ const DEFAULT_ACTIONS = {
       return Services.prefs.getBoolPref("print.enabled");
     },
     onPick: (_queryContext, controller) => {
-      // This writes over the users last used printer which we
-      // should not do. Refactor to launch the print preview with
-      // custom settings.
-      Cc["@mozilla.org/gfx/printsettings-service;1"]
-        .getService(Ci.nsIPrintSettingsService)
-        .maybeSaveLastUsedPrinterNameToPrefs(
-          controller.browserWindow.PrintUtils.SAVE_TO_PDF_PRINTER
-        );
-      controller.browserWindow.PrintUtils.startPrintWindow(
-        controller.browserWindow.gBrowser.selectedBrowser.browsingContext,
-        {}
-      );
+      // This remains a source-level backstop if the locked visibility pref is
+      // ever bypassed, and does not depend on compile-disabled printUtils.js.
+      controller.browserWindow.notifyDenBrowserPrintingBlocked();
     },
   },
   screenshot: {

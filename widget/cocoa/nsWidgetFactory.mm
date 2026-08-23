@@ -31,10 +31,12 @@
 #include "NativeKeyBindings.h"
 #include "MacOSNotificationCenter.h"
 
-#include "nsDeviceContextSpecX.h"
-#include "nsPrinterListCUPS.h"
-#include "nsPrintSettingsServiceX.h"
-#include "nsPrintDialogX.h"
+#ifdef NS_PRINTING
+#  include "nsDeviceContextSpecX.h"
+#  include "nsPrinterListCUPS.h"
+#  include "nsPrintDialogX.h"
+#  include "nsPrintSettingsServiceX.h"
+#endif
 #include "nsToolkitCompsCID.h"
 
 #include "mozilla/widget/ScreenManager.h"
@@ -78,10 +80,12 @@ MAKE_GENERIC_CTOR(nsTransferable, nsITransferable)
 MAKE_GENERIC_CTOR(nsHTMLFormatConverter, nsIFormatConverter)
 MAKE_GENERIC_CTOR(nsClipboardHelper, nsIClipboardHelper)
 MAKE_GENERIC_CTOR(nsDragService, nsIDragService)
+#ifdef NS_PRINTING
 MAKE_GENERIC_CTOR(nsDeviceContextSpecX, nsIDeviceContextSpec)
 MAKE_GENERIC_CTOR(nsPrinterListCUPS, nsIPrinterList)
 MAKE_GENERIC_CTOR_INIT(nsPrintSettingsServiceX, nsIPrintSettingsService, Init)
 MAKE_GENERIC_CTOR_INIT(nsPrintDialogServiceX, nsIPrintDialogService, Init)
+#endif
 MAKE_GENERIC_SINGLETON_CTOR(nsUserIdleServiceX, nsUserIdleServiceX::GetInstance)
 MAKE_GENERIC_SINGLETON_CTOR(ScreenManager, ScreenManager::GetAddRefedSingleton)
 MAKE_GENERIC_CTOR_INIT(MacOSNotificationCenter, nsIAlertsService, Init)
