@@ -2494,15 +2494,11 @@ export class nsContextMenu {
   }
 
   printFrame() {
-    this.window.PrintUtils.startPrintWindow(this.actor.browsingContext, {
-      printFrameOnly: true,
-    });
+    this.window.notifyDenBrowserPrintingBlocked(this.actor.browsingContext);
   }
 
   printSelection() {
-    this.window.PrintUtils.startPrintWindow(this.actor.browsingContext, {
-      printSelectionOnly: true,
-    });
+    this.window.notifyDenBrowserPrintingBlocked(this.actor.browsingContext);
   }
 
   switchPageDirection() {

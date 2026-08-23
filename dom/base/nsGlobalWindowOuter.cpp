@@ -263,6 +263,8 @@ using mozilla::OriginAttributes;
 using mozilla::TimeStamp;
 using mozilla::layout::RemotePrintJobChild;
 
+static bool MOZ_NEVER_INLINE IsDenBrowserPrintingDisabled() { return true; }
+
 static inline nsGlobalWindowInner* GetCurrentInnerWindowInternal(
     const nsGlobalWindowOuter* aOuter) {
   return nsGlobalWindowInner::Cast(aOuter->GetCurrentInnerWindow());
@@ -4965,6 +4967,14 @@ void nsGlobalWindowOuter::PrintOuter(ErrorResult& aError) {
     return;
   }
 
+  if (IsDenBrowserPrintingDisabled()) {
+    // Stop before delayed-print, clone, or modal state. The chrome-only event
+    // is forwarded asynchronously by the Printing actor.
+    DispatchCustomEvent(u"DenBrowserPrintingBlocked"_ns,
+                        ChromeOnlyDispatch::eYes);
+    return;
+  }
+
   // Printing is disabled, silently return.
   if (!StaticPrefs::print_enabled()) {
     return;
@@ -5026,6 +5036,12 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
     IsPreview aIsPreview, IsForWindowDotPrint aForWindowDotPrint,
     PrintPreviewResolver&& aPrintPreviewCallback,
     RefPtr<BrowsingContext>* aCachedBrowsingContext, ErrorResult& aError) {
+  if (IsDenBrowserPrintingDisabled()) {
+    // Also reject direct internal callers before print services, cloning, IPC,
+    // or AutoModalState can be initialized.
+    aError.Throw(NS_ERROR_ABORT);
+    return nullptr;
+  }
 #ifdef NS_PRINTING
   nsCOMPtr<nsIPrintSettingsService> printSettingsService =
       do_GetService("@mozilla.org/gfx/printsettings-service;1");
