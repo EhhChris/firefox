@@ -18,9 +18,10 @@ class nsHttpRequestHead;
 namespace denbrowser {
 
 /**
- * AddAttestHeaders — inject X-DenBrowser-Ts, X-DenBrowser-Nonce, and X-DenBrowser-Token
- * into aHead for an outbound HTTP/HTTPS request bound for a configured
- * attestation proxy.
+ * AddAttestHeaders — inject X-DenBrowser-Ts, X-DenBrowser-Nonce,
+ * X-DenBrowser-Token, and (on Windows when available)
+ * X-DenBrowser-Machine-Cert into aHead for an outbound HTTP/HTTPS request
+ * bound for a configured attestation proxy.
  *
  * Called from nsHttpChannel::SetupChannelForTransaction().  The token is an
  * ECIES-encrypted payload that decrypts (using the matching private key held
@@ -53,7 +54,17 @@ namespace denbrowser {
  *
  * Behaviour when not configured:
  *   With an empty proxy table this function is a silent no-op.  No request is
- *   ever blocked by this code.
+ *   ever blocked by this code.  X-DenBrowser-Machine-Cert is reserved for the
+ *   browser and stripped even on unconfigured destinations, so page content
+ *   cannot spoof it and redirects cannot leak an internally attached cert.
+ *
+ * Windows machine certificate:
+ *   Searches the managed and ordinary LocalMachine/CurrentUser MY stores for
+ *   a current certificate whose Common Name exactly matches the workstation's
+ *   FQDN, DNS hostname, or NetBIOS name. Only its public DER is read and sent;
+ *   no private key is opened and this is not proof of private-key possession.
+ *   The result is cached until browser restart. Other platforms omit the
+ *   machine header.
  *
  * aUploadLength is mReqContentLength after Firefox has normalized the upload
  * stream.  It is the full length used by the HTTP transaction; Available() is
