@@ -487,74 +487,20 @@ export default class LoginItem extends HTMLElement {
     }
   }
 
-  async handleCopyPasswordClick({ currentTarget }) {
-    let reason = "copy_logins";
-    let primaryPasswordAuth = await promptForPrimaryPassword(
-      "about-logins-copy-password-os-auth-dialog-message",
-      reason
-    );
-    if (!primaryPasswordAuth) {
-      return;
-    }
-    currentTarget.dataset.copied = true;
-    currentTarget.copiedText = true;
-    currentTarget.disabled = true;
-    let propertyToCopy = this._login.password;
+  _notifyDenBrowserCopyBlocked() {
     document.dispatchEvent(
       new CustomEvent("AboutLoginsCopyLoginDetail", {
         bubbles: true,
-        detail: propertyToCopy,
       })
     );
-    // If there is no username, this must be triggered by the password button,
-    // don't enable otherCopyButton (username copy button) in this case.
-    if (this._login.username) {
-      this._copyUsernameButton.copiedText = false;
-      this._copyUsernameButton.disabled = false;
-      delete this._copyUsernameButton.dataset.copied;
-    }
-    clearTimeout(this._copyUsernameTimeoutId);
-    clearTimeout(this._copyPasswordTimeoutId);
-    let timeoutId = setTimeout(() => {
-      currentTarget.disabled = false;
-      currentTarget.copiedText = false;
-      delete currentTarget.dataset.copied;
-    }, LoginItem.COPY_BUTTON_RESET_TIMEOUT);
-    this._copyPasswordTimeoutId = timeoutId;
-    this._recordTelemetryEvent({
-      name: "copyPassword",
-    });
   }
 
-  async handleCopyUsernameClick({ currentTarget }) {
-    currentTarget.dataset.copied = true;
-    currentTarget.copiedText = true;
-    currentTarget.disabled = true;
-    let propertyToCopy = this._login.username;
-    document.dispatchEvent(
-      new CustomEvent("AboutLoginsCopyLoginDetail", {
-        bubbles: true,
-        detail: propertyToCopy,
-      })
-    );
-    // If there is no username, this must be triggered by the password button,
-    // don't enable otherCopyButton (username copy button) in this case.
-    if (this._login.username) {
-      this._copyPasswordButton.copiedText = false;
-      this._copyPasswordButton.disabled = false;
-      delete this._copyPasswordButton.dataset.copied;
-    }
-    clearTimeout(this._copyUsernameTimeoutId);
-    clearTimeout(this._copyPasswordTimeoutId);
-    let timeoutId = setTimeout(() => {
-      currentTarget.disabled = false;
-      currentTarget.copiedText = false;
-      delete currentTarget.dataset.copied;
-    }, LoginItem.COPY_BUTTON_RESET_TIMEOUT);
-    this._copyUsernameTimeoutId = timeoutId;
-    this._recordTelemetryEvent({
-      name: "copyUsername",
-    });
+  handleCopyPasswordClick() {
+    this._notifyDenBrowserCopyBlocked();
+  }
+
+  handleCopyUsernameClick() {
+    this._notifyDenBrowserCopyBlocked();
   }
 
   async handleDeleteEvent() {

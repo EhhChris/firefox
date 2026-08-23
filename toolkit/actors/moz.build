@@ -51,6 +51,8 @@ FINAL_TARGET_FILES.actors += [
     "ContentMetaParent.sys.mjs",
     "ControllersChild.sys.mjs",
     "ControllersParent.sys.mjs",
+    "DenBrowserClipboardChild.sys.mjs",
+    "DenBrowserClipboardParent.sys.mjs",
     "ExtFindChild.sys.mjs",
     "FindBarChild.sys.mjs",
     "FindBarParent.sys.mjs",
