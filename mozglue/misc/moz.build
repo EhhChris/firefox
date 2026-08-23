@@ -33,6 +33,7 @@ EXPORTS.mozilla.glue += [
 
 if CONFIG["OS_ARCH"] == "WINNT":
     EXPORTS.mozilla += [
+        "DenBrowserProcessSecurity.h",
         "GetKnownFolderPath.h",
         "PreXULSkeletonUI.h",
         "StackWalk_windows.h",
@@ -88,6 +89,7 @@ if CONFIG["OS_ARCH"] == "WINNT":
         "WindowsUnicode.h",
     ]
     SOURCES += [
+        "DenBrowserProcessSecurity.cpp",
         "GetKnownFolderPath.cpp",
         "WindowsDiagnostics.cpp",
         "WindowsDllMain.cpp",
