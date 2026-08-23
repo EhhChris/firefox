@@ -17,8 +17,9 @@
 #include "base/logging.h"
 #include "base/win_util.h"
 
-#include "mozilla/ipc/LaunchError.h"
+#include "mozilla/DenBrowserProcessSecurity.h"
 #include "mozilla/Result.h"
+#include "mozilla/ipc/LaunchError.h"
 
 #include <algorithm>
 #include <stdio.h>
@@ -303,11 +304,19 @@ Result<Ok, LaunchError> LaunchApp(const std::wstring& cmdline,
   FreeEnvironmentStrings(original_environment);
   LPVOID new_env_ptr = (void*)new_environment.data();
 
+  mozilla::denbrowser::ProcessSecurityAttributes process_security;
+  if (!process_security) {
+    if (lpAttributeList) FreeThreadAttributeList(lpAttributeList);
+    return Err(LaunchError::FromWin32Error("ProcessSecurityAttributes",
+                                           process_security.LastError()));
+  }
+
   PROCESS_INFORMATION process_info;
 
-  BOOL createdOK = CreateProcess(
-      NULL, const_cast<wchar_t*>(cmdline.c_str()), NULL, NULL, bInheritHandles,
-      dwCreationFlags, new_env_ptr, NULL, &startup_info, &process_info);
+  BOOL createdOK = CreateProcess(NULL, const_cast<wchar_t*>(cmdline.c_str()),
+                                 process_security.Get(), NULL, bInheritHandles,
+                                 dwCreationFlags, new_env_ptr, NULL,
+                                 &startup_info, &process_info);
   if (lpAttributeList) FreeThreadAttributeList(lpAttributeList);
   if (!createdOK) {
     DLOG(WARNING) << "CreateProcess Failed: " << GetLastError();
