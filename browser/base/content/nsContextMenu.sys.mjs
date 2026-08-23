@@ -2677,7 +2677,9 @@ export class nsContextMenu {
     );
 
     let opts = {
-      isContextRelevant: (this.isTextSelected || this.onLink) && !this.onImage,
+      // DenBrowser: never expose selected or link text through a context-menu
+      // search. Keep both menu items hidden through Firefox's normal logic.
+      isContextRelevant: false,
       searchTerms: selectedText,
       searchUrlType: lazy.SearchUtils.URL_TYPE.SEARCH,
     };
