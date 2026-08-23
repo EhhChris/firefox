@@ -28,6 +28,38 @@ var ContentAreaUtils = {
   },
 };
 
+const DENBROWSER_SAVING_DISABLED = true;
+
+function getDenBrowserSaveNotificationBrowser(aInitiatingDocument) {
+  try {
+    let browser =
+      aInitiatingDocument?.defaultView?.docShell?.chromeEventHandler;
+    if (browser?.localName == "browser") {
+      return browser;
+    }
+  } catch {
+    // Some callers pass an nsIWebBrowserPersistDocument rather than a DOM doc.
+  }
+
+  return (
+    globalThis.gBrowser?.selectedBrowser ||
+    Services.wm.getMostRecentWindow("navigator:browser")?.gBrowser
+      ?.selectedBrowser ||
+    null
+  );
+}
+
+function dispatchDenBrowserSaveBlocked(aBrowser) {
+  if (aBrowser?.localName != "browser") {
+    return;
+  }
+
+  let chromeWindow = aBrowser.documentGlobal;
+  aBrowser.dispatchEvent(
+    new chromeWindow.CustomEvent("DenBrowserSaveBlocked", { bubbles: true })
+  );
+}
+
 function urlSecurityCheck(
   aURL,
   aPrincipal,
@@ -107,6 +139,13 @@ function saveBrowser(aBrowser, aSkipPrompt, aBrowsingContext = null) {
   if (!aBrowser) {
     throw new Error("Must have a browser when calling saveBrowser");
   }
+
+  if (DENBROWSER_SAVING_DISABLED) {
+    // Block before PDF.js or WebBrowserPersist creates save state.
+    dispatchDenBrowserSaveBlocked(aBrowser);
+    return;
+  }
+
   let persistable = aBrowser.frameLoader;
   // PDF.js has its own way to handle saving PDFs since it may need to
   // generate a new PDF to save modified form data.
@@ -295,6 +334,21 @@ function internalSave(
   aPrincipal,
   aSaveCompleteCallback
 ) {
+  if (DENBROWSER_SAVING_DISABLED) {
+    // Backstop saveURL/context-menu callers that bypass saveBrowser. Match the
+    // normal picker-cancel cleanup so no actor retains a closing content window.
+    let notificationBrowser =
+      getDenBrowserSaveNotificationBrowser(aInitiatingDocument);
+    aDocument?.close();
+    if (aSaveCompleteCallback) {
+      Promise.resolve()
+        .then(() => aSaveCompleteCallback())
+        .catch(console.error);
+    }
+    dispatchDenBrowserSaveBlocked(notificationBrowser);
+    return;
+  }
+
   if (aSkipPrompt == undefined) {
     aSkipPrompt = false;
   }

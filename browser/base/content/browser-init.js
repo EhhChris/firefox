@@ -40,6 +40,189 @@ var gSerialDeviceObserver = {
   },
 };
 
+const DENBROWSER_BLOCKED_NOTIFICATION_TIMEOUT_MS = 4000;
+const DENBROWSER_BLOCKED_NOTIFICATION_VALUE = "denbrowser-action-blocked";
+const DENBROWSER_BLOCKED_NOTIFICATION_DETAILS = new Map([
+  [
+    "DenBrowserSaveBlocked",
+    {
+      l10nId: "denbrowser-saving-blocked-infobar",
+    },
+  ],
+  [
+    "DenBrowserPrintingBlocked",
+    {
+      l10nId: "denbrowser-printing-blocked-infobar",
+    },
+  ],
+  [
+    "DenBrowserCopyBlocked",
+    {
+      l10nId: "denbrowser-copying-blocked-infobar",
+    },
+  ],
+  [
+    "DenBrowserDevToolsBlocked",
+    {
+      l10nId: "denbrowser-devtools-blocked-infobar",
+    },
+  ],
+]);
+const gDenBrowserBlockedNotificationStates = new WeakMap();
+
+function clearDenBrowserBlockedNotificationState(browser, state) {
+  if (state.timer) {
+    browser.documentGlobal?.clearTimeout(state.timer);
+    state.timer = null;
+  }
+  if (gDenBrowserBlockedNotificationStates.get(browser) == state) {
+    gDenBrowserBlockedNotificationStates.delete(browser);
+  }
+}
+
+function armDenBrowserBlockedNotificationTimeout(
+  browser,
+  notificationBox,
+  state
+) {
+  let timerWindow = browser.documentGlobal;
+  if (!timerWindow) {
+    clearDenBrowserBlockedNotificationState(browser, state);
+    return;
+  }
+  if (state.timer) {
+    timerWindow.clearTimeout(state.timer);
+  }
+  state.timer = timerWindow.setTimeout(() => {
+    if (state.notification?.isConnected) {
+      // Removing immediately avoids overlapping slide animations when several
+      // different blocked actions are attempted in quick succession.
+      notificationBox.removeNotification(state.notification, true);
+    }
+    clearDenBrowserBlockedNotificationState(browser, state);
+  }, DENBROWSER_BLOCKED_NOTIFICATION_TIMEOUT_MS);
+}
+
+async function showDenBrowserBlockedNotification(browser, details) {
+  let notificationBox = browser.getTabBrowser?.()?.getNotificationBox(browser);
+  if (!notificationBox) {
+    return;
+  }
+
+  let state = gDenBrowserBlockedNotificationStates.get(browser);
+  if (!state) {
+    state = {
+      notification: null,
+      creationPromise: null,
+      timer: null,
+      details,
+    };
+    gDenBrowserBlockedNotificationStates.set(browser, state);
+  } else {
+    state.details = details;
+  }
+
+  if (state.notification?.isConnected) {
+    state.notification.label = { "l10n-id": state.details.l10nId };
+    armDenBrowserBlockedNotificationTimeout(browser, notificationBox, state);
+    return;
+  }
+
+  // A mixed burst (for example Print followed immediately by Save) should
+  // update the one pending bar, not start concurrent append animations.
+  if (state.creationPromise) {
+    return;
+  }
+
+  try {
+    state.notification = notificationBox.getNotificationWithValue(
+      DENBROWSER_BLOCKED_NOTIFICATION_VALUE
+    );
+    if (!state.notification) {
+      state.creationPromise = notificationBox.appendNotification(
+        DENBROWSER_BLOCKED_NOTIFICATION_VALUE,
+        {
+          label: { "l10n-id": state.details.l10nId },
+          priority: notificationBox.PRIORITY_INFO_LOW,
+          eventCallback: event => {
+            if (
+              event == "dismissed" ||
+              event == "removed" ||
+              event == "disconnected"
+            ) {
+              clearDenBrowserBlockedNotificationState(browser, state);
+            }
+          },
+        }
+      );
+      state.notification = await state.creationPromise;
+      state.creationPromise = null;
+    }
+
+    if (
+      gDenBrowserBlockedNotificationStates.get(browser) != state ||
+      !state.notification?.isConnected
+    ) {
+      clearDenBrowserBlockedNotificationState(browser, state);
+      return;
+    }
+
+    // An event may have changed the requested message while appendNotification
+    // was awaiting custom-element creation or Fluent translation.
+    state.notification.label = { "l10n-id": state.details.l10nId };
+    armDenBrowserBlockedNotificationTimeout(browser, notificationBox, state);
+  } catch {
+    // The tab or window may have closed while the notification was being made.
+    state.creationPromise = null;
+    clearDenBrowserBlockedNotificationState(browser, state);
+  }
+}
+
+function queueDenBrowserBlockedNotification(event) {
+  let eventType = event.type;
+  let details = DENBROWSER_BLOCKED_NOTIFICATION_DETAILS.get(eventType);
+  let browser = event.target;
+  if (!details || browser?.localName != "browser") {
+    return;
+  }
+
+  // Short-lived chromeless popups commonly close as soon as print() returns.
+  // Put their notification on the opener so that it remains visible.
+  let openerBrowser = browser.browsingContext?.opener?.top?.embedderElement;
+  if (!openerBrowser?.isConnected || !openerBrowser.documentGlobal) {
+    openerBrowser = null;
+  }
+  let chromeDocument = browser.documentGlobal?.document?.documentElement;
+  if (
+    openerBrowser &&
+    chromeDocument?.getAttribute("chromehidden") &&
+    !browser.canGoBack
+  ) {
+    let openerWindow = openerBrowser.documentGlobal;
+    openerBrowser.dispatchEvent(
+      new openerWindow.CustomEvent(eventType, { bubbles: true })
+    );
+    return;
+  }
+
+  // Keep the opener's chrome window alive as the timer host. If a regular
+  // popup closes before this callback runs, route the notification to its
+  // opener instead of losing it with the popup.
+  let timerWindow = openerBrowser?.documentGlobal || window;
+  timerWindow.setTimeout(() => {
+    if (!browser.isConnected && openerBrowser?.isConnected) {
+      let openerWindow = openerBrowser.documentGlobal;
+      openerBrowser.dispatchEvent(
+        new openerWindow.CustomEvent(eventType, { bubbles: true })
+      );
+      return;
+    }
+    if (browser.isConnected) {
+      void showDenBrowserBlockedNotification(browser, details);
+    }
+  }, 0);
+}
+
 let _resolveDelayedStartup;
 var delayedStartupPromise = new Promise(resolve => {
   _resolveDelayedStartup = resolve;
@@ -309,6 +492,23 @@ var gBrowserInit = {
   },
 
   onLoad() {
+    document.addEventListener(
+      "DenBrowserSaveBlocked",
+      queueDenBrowserBlockedNotification
+    );
+    document.addEventListener(
+      "DenBrowserPrintingBlocked",
+      queueDenBrowserBlockedNotification
+    );
+    document.addEventListener(
+      "DenBrowserCopyBlocked",
+      queueDenBrowserBlockedNotification
+    );
+    document.addEventListener(
+      "DenBrowserDevToolsBlocked",
+      queueDenBrowserBlockedNotification
+    );
+
     gBrowser.addEventListener("DOMUpdateBlockedPopups", e =>
       PopupAndRedirectBlockerObserver.handleEvent(e)
     );
