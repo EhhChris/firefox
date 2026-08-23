@@ -2633,6 +2633,10 @@ export var XPIProvider = {
     ];
 
     for (let [constructor, name, scope, ...args] of locations) {
+      // DenBrowser: only register application-scoped (built-in) addon locations.
+      if (scope !== AddonManager.SCOPE_APPLICATION) {
+        continue;
+      }
       if (!scope || lazy.enabledScopes & scope) {
         try {
           let loc = constructor(name, scope, ...args);
