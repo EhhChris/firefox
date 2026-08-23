@@ -714,6 +714,8 @@ var Impl = {
    *                   initialized. This is only used in tests.
    */
   setupTelemetry: function setupTelemetry(testing) {
+    // DenBrowser: telemetry permanently disabled.
+    return Promise.resolve();
     this._initStarted = true;
     this._shuttingDown = false;
     this._shutDown = false;
