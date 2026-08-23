@@ -5,6 +5,8 @@
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
+const DENBROWSER_DESKTOP_BACKGROUND_DISABLED = true;
+
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -100,6 +102,9 @@ let ShellServiceInternal = {
    * environments.
    */
   get canSetDesktopBackground() {
+    if (DENBROWSER_DESKTOP_BACKGROUND_DISABLED) {
+      return false;
+    }
     if (AppConstants.platform == "win" || AppConstants.platform == "macosx") {
       return true;
     }

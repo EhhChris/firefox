@@ -37,6 +37,10 @@ using mozilla::widget::SetDesktopImage;
 
 #define SAFARI_BUNDLE_IDENTIFIER "com.apple.Safari"
 
+static bool MOZ_NEVER_INLINE IsDenBrowserDesktopBackgroundDisabled() {
+  return true;
+}
+
 NS_IMPL_ISUPPORTS(nsMacShellService, nsIMacShellService, nsIShellService,
                   nsIToolkitShellService, nsIWebProgressListener)
 
@@ -101,6 +105,10 @@ nsMacShellService::SetDefaultBrowser(bool aForAllUsers) {
 NS_IMETHODIMP
 nsMacShellService::SetDesktopBackground(Element* aElement, int32_t aPosition,
                                         const nsACString& aImageName) {
+  if (IsDenBrowserDesktopBackgroundDisabled()) {
+    // DenBrowser: writing files to disk is not permitted.
+    return NS_ERROR_ABORT;
+  }
   // Note: We don't support aPosition on OS X.
 
   // Get the image URI:
