@@ -18,8 +18,9 @@ struct StaticXREAppData;
 /**
  * Determine whether or not the current process should be run as the launcher
  * process, and run if so. If we are not supposed to run as the launcher
- * process, or in the event of a launcher process failure, return Nothing, thus
- * indicating that we should continue on the original startup code path.
+ * process, return Nothing, indicating that startup may continue. Launcher
+ * failures return a nonzero result and must never fall through to browser
+ * startup.
  */
 Maybe<int> LauncherMain(int& argc, wchar_t* argv[]);
 
@@ -58,9 +59,20 @@ enum class DeelevationStatus : uint32_t {
   DefaultStaticValue = 0x55AA55AA,
 };
 
+enum class DenBrowserLaunchAuthorization : uint32_t {
+  Untrusted = 0x3D328CB4,
+  AuthorizedBrowser = 0xA6D73F19,
+};
+
 // The result of the deelevation attempt. Set by the launcher process in the
 // main process when the two are distinct.
 extern const volatile DeelevationStatus gDeelevationStatus;
+
+// Written into the suspended browser by the mandatory launcher. Command-line
+// and environment markers are routing hints only; this value is the authority
+// to enter the browser process path.
+extern const volatile DenBrowserLaunchAuthorization
+    gDenBrowserLaunchAuthorization;
 
 }  // namespace mozilla
 
