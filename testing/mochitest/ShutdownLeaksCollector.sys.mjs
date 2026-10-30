@@ -15,6 +15,7 @@ export var ContentCollector = {
   // this process during a test, and not destroyed yet. Windows only send the
   // debug-domwindow-* notifications in debug builds.
   liveWindows: new Map(),
+  windowsDestroyed: 0,
 
   init() {
     let processType = Services.appinfo.processType;
@@ -50,6 +51,7 @@ export var ContentCollector = {
       info.time = Date.now();
       this.liveWindows.set(info.serial, info);
     } else {
+      this.windowsDestroyed++;
       this.liveWindows.delete(info.serial);
     }
   },
@@ -70,12 +72,24 @@ export var ContentCollector = {
           });
         };
 
-        shutdownCleanup(() => {
-          setTimeout(() => {
-            shutdownCleanup(() => {
+        let extraRounds = 0;
+        let round = () => {
+          let before = this.windowsDestroyed;
+          shutdownCleanup(() => {
+            // Let the dispatched debug-domwindow-destroyed notifications land.
+            Services.tm.dispatchToMainThread(() => {
+              if (this.windowsDestroyed > before && extraRounds < 10) {
+                extraRounds++;
+                round();
+                return;
+              }
               this.finish();
             });
-          }, 1000);
+          });
+        };
+
+        shutdownCleanup(() => {
+          setTimeout(round, 1000);
         });
 
         break;
@@ -97,8 +111,6 @@ export var ContentCollector = {
     // test_status records of the leaked windows, for the parent to log.
     let leaks = [];
     try {
-      // Window destructors send debug-domwindow-destroyed from a runnable.
-      await new Promise(resolve => Services.tm.dispatchToMainThread(resolve));
       let leaked = [...this.liveWindows.values()];
       // An outer window whose inner window also leaked is the same leak.
       let innerOuterAddrs = new Set(
