@@ -50,8 +50,6 @@ ChromeUtils.defineESModuleGetters(this, {
   TranslationsParent: "resource://gre/actors/TranslationsParent.sys.mjs",
   TranslationsUtils:
     "chrome://global/content/translations/TranslationsUtils.mjs",
-  LaunchOnLogin: "resource://gre/modules/LaunchOnLogin.sys.mjs",
-  NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
   FormAutofillPreferences:
     "resource://autofill/FormAutofillPreferences.sys.mjs",
 });
@@ -103,9 +101,6 @@ function canShowAiFeature(featureSetting, defaultSetting) {
 
 Preferences.addAll([
   // Startup
-  { id: "browser.startup.page", type: "int" },
-  { id: "browser.sessionstore.newTabOnRestore", type: "bool" },
-  { id: "browser.startup.windowsLaunchOnLogin.enabled", type: "bool" },
   { id: "browser.privatebrowsing.autostart", type: "bool" },
 
   // AI Controls, these pref values can affect settings on the main pane and
@@ -133,159 +128,6 @@ Preferences.addAll([
 Preferences.addSetting({
   id: "privateBrowsingAutoStart",
   pref: "browser.privatebrowsing.autostart",
-});
-
-Preferences.addSetting(
-  /** @type {{ _getLaunchOnLoginApprovedCachedValue: boolean } & SettingConfig} */ ({
-    id: "launchOnLoginApproved",
-    _getLaunchOnLoginApprovedCachedValue: true,
-    get() {
-      return this._getLaunchOnLoginApprovedCachedValue;
-    },
-    // Check for a launch on login registry key
-    // This accounts for if a user manually changes it in the registry
-    // Disabling in Task Manager works outside of just deleting the registry key
-    // in HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run
-    // but it is not possible to change it back to enabled as the disabled value is just a random
-    // hexadecimal number
-    setup() {
-      if (!LaunchOnLogin.isSupported()) {
-        return;
-      }
-      // @ts-ignore bug 1996860
-      LaunchOnLogin.isAllowed().then(val => {
-        this._getLaunchOnLoginApprovedCachedValue = val;
-      });
-    },
-  })
-);
-
-Preferences.addSetting({
-  id: "windowsLaunchOnLoginEnabled",
-  pref: "browser.startup.windowsLaunchOnLogin.enabled",
-});
-
-Preferences.addSetting(
-  /** @type {{_getLaunchOnLoginEnabledValue: boolean} & SettingConfig} */ ({
-    id: "windowsLaunchOnLogin",
-    deps: ["launchOnLoginApproved", "windowsLaunchOnLoginEnabled"],
-    _getLaunchOnLoginEnabledValue: false,
-    get() {
-      return this._getLaunchOnLoginEnabledValue;
-    },
-    setup(emitChange) {
-      if (!LaunchOnLogin.isSupported()) {
-        return;
-      }
-
-      // @ts-ignore bug 1996860
-      LaunchOnLogin.isEnabled().then(val => {
-        if (val !== this._getLaunchOnLoginEnabledValue) {
-          this._getLaunchOnLoginEnabledValue = val;
-          emitChange();
-        }
-      });
-    },
-    visible: ({ windowsLaunchOnLoginEnabled }) => {
-      let isVisible =
-        LaunchOnLogin.isSupported() && windowsLaunchOnLoginEnabled.value;
-      if (isVisible) {
-        // @ts-ignore bug 1996860
-        NimbusFeatures.windowsLaunchOnLogin.recordExposureEvent({
-          once: true,
-        });
-      }
-      return isVisible;
-    },
-    disabled({ launchOnLoginApproved }) {
-      return !launchOnLoginApproved.value;
-    },
-    onUserChange(checked) {
-      Glean.launchOnLogin.userToggle.record({ enabled: checked });
-      if (checked) {
-        // windowsLaunchOnLogin has been checked: create registry key or shortcut
-        // The shortcut is created with the same AUMID as Firefox itself. However,
-        // this is not set during browser tests and the fallback of checking the
-        // registry fails. As such we pass an arbitrary AUMID for the purpose
-        // of testing.
-        // @ts-ignore bug 1996860
-        LaunchOnLogin.enable();
-      } else {
-        // windowsLaunchOnLogin has been unchecked: delete registry key and shortcut
-        // @ts-ignore bug 1996860
-        LaunchOnLogin.disable();
-      }
-    },
-  })
-);
-
-Preferences.addSetting({
-  id: "windowsLaunchOnLoginDisabledBox",
-  deps: ["launchOnLoginApproved", "windowsLaunchOnLoginEnabled"],
-  visible: ({ launchOnLoginApproved, windowsLaunchOnLoginEnabled }) => {
-    if (!LaunchOnLogin.isSupported()) {
-      return false;
-    }
-    return !launchOnLoginApproved.value && windowsLaunchOnLoginEnabled.value;
-  },
-});
-
-Preferences.addSetting({
-  /**
-   * The "Open previous windows and tabs" option on about:preferences page.
-   */
-  id: "browserRestoreSession",
-  pref: "browser.startup.page",
-  deps: ["privateBrowsingAutoStart"],
-  get:
-    /**
-     * Returns the value of the "Open previous windows and tabs" option based
-     * on the value of the browser.privatebrowsing.autostart pref.
-     *
-     * @param {number | undefined} value
-     * @returns {boolean}
-     */
-    value => {
-      const pbAutoStartPref = Preferences.get(
-        "browser.privatebrowsing.autostart"
-      );
-      let newValue = pbAutoStartPref.value
-        ? false
-        : value === gMainPane.STARTUP_PREF_RESTORE_SESSION;
-
-      return newValue;
-    },
-  set: checked => {
-    const startupPref = Preferences.get("browser.startup.page");
-    let newValue;
-
-    if (checked) {
-      // We need to restore the blank homepage setting in our other pref
-      if (startupPref.value === gMainPane.STARTUP_PREF_BLANK) {
-        // @ts-ignore bug 1996860
-        HomePage.safeSet("about:blank");
-      }
-      newValue = gMainPane.STARTUP_PREF_RESTORE_SESSION;
-    } else {
-      newValue = gMainPane.STARTUP_PREF_HOMEPAGE;
-    }
-    return newValue;
-  },
-  disabled: deps => {
-    return deps.privateBrowsingAutoStart.value;
-  },
-});
-
-Preferences.addSetting({
-  id: "sessionRestoreNewTab",
-  pref: "browser.sessionstore.newTabOnRestore",
-  deps: ["browserRestoreSession"],
-  visible: () =>
-    Services.prefs.getBoolPref(
-      "browser.sessionstore.newTabOnRestore.showSetting",
-      false
-    ),
-  disabled: deps => !deps.browserRestoreSession.value,
 });
 
 Preferences.addSetting({
@@ -346,64 +188,6 @@ Preferences.addSetting({
 Preferences.addSetting({
   id: "chatbotProvider",
   pref: "browser.ml.chat.provider",
-});
-
-function createStartupConfig(hidden = false) {
-  return {
-    l10nId: "startup-group",
-    headingLevel: 2,
-    hidden,
-    items: [
-      {
-        id: "browserRestoreSession",
-        l10nId: "startup-restore-windows-and-tabs",
-        items: [
-          {
-            id: "sessionRestoreNewTab",
-            l10nId: "windows-launch-on-login-open-new-tab",
-          },
-        ],
-      },
-      {
-        id: "windowsLaunchOnLogin",
-        l10nId: "windows-launch-on-login",
-      },
-      {
-        id: "windowsLaunchOnLoginDisabledBox",
-        control: "moz-message-bar",
-        controlAttrs: {
-          role: "status",
-        },
-        options: [
-          {
-            control: "span",
-            l10nId: "windows-launch-on-login-disabled",
-            slot: "message",
-            options: [
-              {
-                control: "a",
-                controlAttrs: {
-                  "data-l10n-name": "startup-link",
-                  href: "ms-settings:startupapps",
-                  target: "_self",
-                },
-              },
-            ],
-          },
-        ],
-      },
-      {
-        id: "alwaysCheckDefault",
-        l10nId: "always-check-default",
-      },
-    ],
-  };
-}
-
-SettingGroupManager.registerGroups({
-  startup: createStartupConfig(
-    Services.prefs.getBoolPref("browser.settings-redesign.enabled", false)
-  ),
 });
 
 /**
@@ -472,11 +256,6 @@ function getBundleForLocales(newLocales) {
 var gNodeToObjectMap = new WeakMap();
 
 var gMainPane = {
-  // browser.startup.page values
-  STARTUP_PREF_BLANK: 0,
-  STARTUP_PREF_HOMEPAGE: 1,
-  STARTUP_PREF_RESTORE_SESSION: 3,
-
   /**
    * Initialization of gMainPane.
    */
@@ -618,23 +397,6 @@ var gMainPane = {
     let accountsTab = win.gBrowser.addWebTab(url);
     win.gBrowser.selectedTab = accountsTab;
   },
-
-  // HOME PAGE
-  /*
-   * Preferences:
-   *
-   * browser.startup.page
-   * - what page(s) to show when the user starts the application, as an integer:
-   *
-   *     0: a blank page (DEPRECATED - this can be set via browser.startup.homepage)
-   *     1: the home page (as set by the browser.startup.homepage pref)
-   *     2: the last page the user visited (DEPRECATED)
-   *     3: windows and tabs from the last session (a.k.a. session restore)
-   *
-   *   The deprecated option is not exposed in UI; however, if the user has it
-   *   selected and doesn't change the UI for this preference, the deprecated
-   *   option is preserved.
-   */
 
   /**
    * Utility function to enable/disable the button specified by aButtonID based
