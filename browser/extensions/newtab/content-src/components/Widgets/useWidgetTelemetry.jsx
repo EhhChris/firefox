@@ -5,6 +5,7 @@
 import { useCallback, useContext, useEffect, useRef } from "react";
 import { actionCreators as ac, actionTypes as at } from "common/Actions.mjs";
 import { SpaceActiveContext } from "content-src/lib/SpaceActiveContext";
+import { WidgetLocationContext } from "./WidgetPlacement";
 
 const IMPRESSION_THRESHOLD = 0.3;
 
@@ -80,6 +81,13 @@ export const useWidgetTelemetry = ({
     [telemetryName]
   );
 
+  // Engagement events say where on the page this copy renders.
+  const widgetLocation = useContext(WidgetLocationContext);
+  const locationRef = useRef(null);
+  locationRef.current = widgetLocation
+    ? { widget_location: widgetLocation }
+    : null;
+
   const impressionFired = useRef(false);
   const fireImpression = useCallback(
     size => {
@@ -87,7 +95,7 @@ export const useWidgetTelemetry = ({
         return;
       }
       impressionFired.current = true;
-      const data = buildPayload({ size });
+      const data = buildPayload({ size, rest: locationRef.current });
       const legacyTypes = legacyImpressionTypesRef.current;
       if (legacyTypes && legacyTypes.length) {
         // Legacy first, then unified, matching the pre-hook dispatch order
@@ -167,6 +175,7 @@ export const useWidgetTelemetry = ({
       const rest = {
         widget_source: source,
         user_action: userAction,
+        ...locationRef.current,
       };
       if (value !== undefined) {
         rest.action_value = value;

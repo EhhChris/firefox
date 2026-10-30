@@ -6,6 +6,12 @@ import { render } from "@testing-library/react";
 import { actionTypes as at } from "common/Actions.mjs";
 import { useWidgetTelemetry } from "content-src/components/Widgets/useWidgetTelemetry";
 import { SpaceActiveContext } from "content-src/lib/SpaceActiveContext";
+import { WIDGET_PLACEMENTS } from "common/PageLayoutVariants.mjs";
+import {
+  WIDGET_LOCATIONS,
+  WidgetLocationContext,
+  WidgetPlacementProvider,
+} from "content-src/components/Widgets/WidgetPlacement";
 
 const WEATHER_WIDGET = { id: "weather", telemetryName: "weather" };
 const FOCUS_TIMER_WIDGET = { id: "focusTimer", telemetryName: "focus_timer" };
@@ -641,6 +647,68 @@ describe("useWidgetTelemetry", () => {
         expect(dispatch.mock.calls[0][0].meta.skipLocal).not.toBe(true);
         expect(dispatch.mock.calls[1][0].meta.skipLocal).not.toBe(true);
       });
+    });
+  });
+
+  describe("widget_location", () => {
+    function eventsWith(wrap) {
+      let telemetry;
+      const { container } = render(
+        wrap(
+          <TestComponent
+            dispatch={dispatch}
+            widget={LISTS_WIDGET}
+            widgetSize="medium"
+            onRender={t => (telemetry = t)}
+          />
+        )
+      );
+      const [observerInstance] = observerStub.mock.instances;
+      observerInstance.callback([
+        { isIntersecting: true, target: container.querySelector("div") },
+      ]);
+      telemetry.recordUserAction("list_create", { source: "widget" });
+      telemetry.recordEnabled(false, { source: "context_menu" });
+      return Object.fromEntries(
+        dispatch.mock.calls.map(([action]) => [action.type, action.data])
+      );
+    }
+
+    it.each([
+      [WIDGET_PLACEMENTS.HOME, WIDGET_LOCATIONS.HOME_SPACE],
+      [WIDGET_PLACEMENTS.LIBRARY, WIDGET_LOCATIONS.WIDGET_SPACE],
+      [null, WIDGET_LOCATIONS.WIDGET_CONTAINER],
+    ])(
+      "reports the widgets section with placement %s as %s",
+      (placement, location) => {
+        const events = eventsWith(child => (
+          <WidgetPlacementProvider placement={placement}>
+            {child}
+          </WidgetPlacementProvider>
+        ));
+        expect(events[at.WIDGETS_IMPRESSION].widget_location).toBe(location);
+        expect(events[at.WIDGETS_USER_EVENT].widget_location).toBe(location);
+        expect("widget_location" in events[at.WIDGETS_ENABLED]).toBe(false);
+      }
+    );
+
+    it.each([WIDGET_LOCATIONS.SIDEBAR, WIDGET_LOCATIONS.STORY_CARD])(
+      "reports %s from its location provider",
+      location => {
+        const events = eventsWith(child => (
+          <WidgetLocationContext.Provider value={location}>
+            {child}
+          </WidgetLocationContext.Provider>
+        ));
+        expect(events[at.WIDGETS_IMPRESSION].widget_location).toBe(location);
+        expect(events[at.WIDGETS_USER_EVENT].widget_location).toBe(location);
+      }
+    );
+
+    it("leaves widget_location out without a location provider", () => {
+      const events = eventsWith(child => child);
+      expect("widget_location" in events[at.WIDGETS_IMPRESSION]).toBe(false);
+      expect("widget_location" in events[at.WIDGETS_USER_EVENT]).toBe(false);
     });
   });
 });

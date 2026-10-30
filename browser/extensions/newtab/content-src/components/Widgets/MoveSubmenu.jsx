@@ -56,7 +56,7 @@ export function MoveSubmenu({ widgetId, widgetEnabledMap }) {
   const toHome = placement === WIDGET_PLACEMENTS.LIBRARY;
   const spaceMove = placement && { dir: toHome ? "home" : "widgets" };
   moveProps.onMoveSpace = () =>
-    setWidgetOnHome(dispatch, prefs, widgetId, toHome);
+    setWidgetOnHome(dispatch, prefs, widgetId, toHome, "context_menu");
 
   // Read the latest moveProps via a ref so the ref callback stays stable and
   // doesn't re-attach the listener every render.

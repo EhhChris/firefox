@@ -1,3 +1,6 @@
+import { WIDGET_ROW_COMPONENTS } from "content-src/components/Widgets/WidgetsComponentRegistry.jsx";
+import { WidgetLocationContext } from "content-src/components/Widgets/WidgetPlacement";
+import { useContext } from "react";
 import { render, fireEvent, createEvent, act } from "@testing-library/react";
 import { WrapWithProvider } from "test/jest/test-utils";
 import { Provider } from "react-redux";
@@ -841,6 +844,33 @@ describe("<Widgets> handleToggleMaximize", () => {
       ).toBeDefined();
     });
 
+    it.each([
+      [undefined, "widget_container"],
+      ["home", "home_space"],
+      ["library", "widget_space"],
+    ])(
+      "should tell its widgets where they render (placement %s: %s)",
+      (placement, location) => {
+        const original = WIDGET_ROW_COMPONENTS.lists;
+        WIDGET_ROW_COMPONENTS.lists = function Probe() {
+          return (
+            <div
+              className="location-probe"
+              data-location={useContext(WidgetLocationContext) ?? ""}
+            />
+          );
+        };
+        try {
+          const { container } = renderWidgets(novaState(), { placement });
+          expect(
+            container.querySelector(".location-probe").dataset.location
+          ).toBe(location);
+        } finally {
+          WIDGET_ROW_COMPONENTS.lists = original;
+        }
+      }
+    );
+
     it("should only empty the Home list when hiding all on Home", () => {
       const { container, store } = renderWidgets(novaState(), {
         placement: "home",
@@ -858,6 +888,18 @@ describe("<Widgets> handleToggleMaximize", () => {
       expect(setPrefCalls.map(action => action.data)).toEqual([
         { name: "widgets.home", value: "[]" },
       ]);
+      const actions = actionsFrom(store);
+      expect(
+        actions.find(action => action.type === at.WIDGETS_CONTAINER_ACTION).data
+          .action_type
+      ).toBe("remove_all_from_home");
+      expect(
+        actions.some(
+          action =>
+            action.type === at.WIDGETS_HIDE_ALL ||
+            action.type === at.WIDGETS_ENABLED
+        )
+      ).toBe(false);
     });
 
     it("should turn widgets off when hiding all in the widget library", () => {

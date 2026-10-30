@@ -55,11 +55,12 @@ import { MozWidgetCard } from "./MozWidgetCard";
 import { WidgetsRowAd } from "./WidgetsRowAd.jsx";
 import { ErrorBoundary } from "content-src/components/ErrorBoundary/ErrorBoundary";
 import { useWidgetDnD } from "./useWidgetDnD.jsx";
-import { WidgetPlacementContext } from "./WidgetPlacement";
+import { WidgetPlacementProvider } from "./WidgetPlacement";
 import { usePageVisible } from "./usePageVisible.jsx";
 
 const CONTAINER_ACTION_TYPES = {
   HIDE_ALL: "hide_all",
+  REMOVE_ALL_FROM_HOME: "remove_all_from_home",
   CHANGE_SIZE_ALL: "change_size_all",
   CHANGE_ROW_VISIBILITY: "change_row_visibility",
   FEEDBACK: "feedback",
@@ -460,6 +461,15 @@ function Widgets({ widgetIds, placement }) {
     // Home only unpins its widgets, which move back to the library.
     if (placement === WIDGET_PLACEMENTS.HOME) {
       dispatch(ac.SetPref(PREF_HOME_WIDGETS, "[]"));
+      dispatch(
+        ac.OnlyToMain({
+          type: at.WIDGETS_CONTAINER_ACTION,
+          data: {
+            action_type: CONTAINER_ACTION_TYPES.REMOVE_ALL_FROM_HOME,
+            widget_size: widgetSize,
+          },
+        })
+      );
       return;
     }
     const targets = getHideAllTargets(widgets, prefs, widgetEnabledMap);
@@ -849,7 +859,7 @@ function Widgets({ widgetIds, placement }) {
   const isCollapsed = novaEnabled && !rowExpanded;
 
   return (
-    <WidgetPlacementContext.Provider value={placement ?? null}>
+    <WidgetPlacementProvider placement={placement}>
       <div className="widgets-wrapper">
         <div className="widgets-section-container" {...overflowAttrs}>
           <div className="widgets-title-container">
@@ -1065,7 +1075,7 @@ function Widgets({ widgetIds, placement }) {
           )}
         </div>
       </div>
-    </WidgetPlacementContext.Provider>
+    </WidgetPlacementProvider>
   );
 }
 
