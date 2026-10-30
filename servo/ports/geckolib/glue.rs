@@ -11551,25 +11551,37 @@ fn compute_arbritrary_substitution_functions(
     // Build the attributes Map that ComputedSubstitutionFunctions needs
     let stylist = &data.stylist;
     let mut attribute_tracker = AttributeTracker::new(&element);
+    let mut substitution_functions = custom_properties::ComputedSubstitutionFunctions::new(
+        Some(style.custom_properties().clone()),
+        None,
+    );
     let attributes: style::custom_properties_map::OwnMap = variable_value
         .references
         .refs
         .iter()
         .filter_map(|reference| {
-            let attr = match &reference.function {
-                style::substitution::SubstitutionFunction::Attr(attr) if attr.has_type() => attr,
-                _ => return None,
+            let style::substitution::SubstitutionFunction::Attr(attr) = &reference.function else {
+                return None;
             };
-            let value = attr
+            let arg = attr.replace_arg(
+                &variable_value,
+                &mut style::substitution::SubstitutionReplacementContext::new(
+                    None,
+                    &substitution_functions,
+                    stylist,
+                    context,
+                    &mut attribute_tracker,
+                ),
+            );
+            let arg = arg.value.filter(|arg| arg.has_type())?;
+            let value = arg
+                .name
                 .value_for_cycle_resolution(&variable_value.url_data, &mut attribute_tracker)
                 .ok()?;
-            Some((attr.name.clone(), Some(value)))
+            Some((arg.name.name.clone(), Some(value)))
         })
         .collect();
-    let substitution_functions = custom_properties::ComputedSubstitutionFunctions::new(
-        Some(style.custom_properties().clone()),
-        Some(attributes),
-    );
+    substitution_functions.attributes = attributes;
 
     let Ok(result) = style::substitution::substitute(
         &variable_value,
