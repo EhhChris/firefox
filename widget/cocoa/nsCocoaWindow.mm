@@ -7755,7 +7755,14 @@ already_AddRefed<nsIWidget> nsIWidget::CreateChildWindow() {
   nsCocoaWindow* geckoWidget = [windowDelegate geckoWidget];
   NS_ASSERTION(geckoWidget, "Window delegate not returning a gecko widget!");
 
-  if (RefPtr<nsMenuBarX> geckoMenuBar = geckoWidget->GetMenuBar()) {
+  RefPtr<nsMenuBarX> geckoMenuBar = geckoWidget->GetMenuBar();
+  if (!geckoMenuBar && geckoWidget->IsMediaPiPWindow()) {
+    // The Picture-in-Picture player has no menu bar of its own. Show the hidden
+    // window's, as when no window is main, rather than one with only the
+    // application menu.
+    geckoMenuBar = nsMenuUtilsX::GetHiddenWindowMenuBar();
+  }
+  if (geckoMenuBar) {
     // We do an async paint in order to prevent crashes when macOS is actively
     // enumerating the menu items in `NSApp.mainMenu`.
     geckoMenuBar->PaintAsyncIfNeeded();
