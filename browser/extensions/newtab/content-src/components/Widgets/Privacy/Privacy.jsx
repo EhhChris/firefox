@@ -19,6 +19,7 @@ import {
   resolvePrivacyDisplayCount,
 } from "common/WidgetsRegistry.mjs";
 import { MoveSubmenu } from "../MoveSubmenu";
+import { WidgetHideMenuItem } from "../WidgetPlacement";
 import { WidgetCelebration, CelebrationSparkles } from "../WidgetCelebration";
 import { useWidgetCelebration } from "../useWidgetCelebration";
 import { useCountUp } from "../useCountUp";
@@ -637,10 +638,7 @@ function Privacy({ dispatch, widgetsMayBeMaximized, widgetEnabledMap }) {
               widgetEnabledMap={widgetEnabledMap}
             />
 
-            <panel-item
-              data-l10n-id="newtab-widget-menu-hide"
-              onClick={handlePrivacyHide}
-            />
+            <WidgetHideMenuItem widgetId="privacy" onHide={handlePrivacyHide} />
             <panel-item
               data-l10n-id="newtab-privacy-menu-learn-more"
               onClick={handleLearnMore}

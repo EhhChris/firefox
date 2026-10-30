@@ -54,12 +54,12 @@ const LEGACY_WEATHER_FORECAST_STATE = {
   },
 };
 
-function renderWidgets(state) {
+function renderWidgets(state, props = {}) {
   const store = createStore(combineReducers(reducers), state);
   jest.spyOn(store, "dispatch");
   const { container } = render(
     <Provider store={store}>
-      <Widgets />
+      <Widgets {...props} />
     </Provider>
   );
   return { container, store };
@@ -839,6 +839,43 @@ describe("<Widgets> handleToggleMaximize", () => {
           action => action.data?.name === PREF_WIDGETS_TIMER_ENABLED
         )
       ).toBeDefined();
+    });
+
+    it("should only empty the Home list when hiding all on Home", () => {
+      const { container, store } = renderWidgets(novaState(), {
+        placement: "home",
+      });
+
+      fireEvent.click(
+        container.querySelector(
+          "panel-item[data-l10n-id='newtab-widget-section-menu-hide-all']"
+        )
+      );
+
+      const setPrefCalls = actionsFrom(store).filter(
+        action => action?.type === at.SET_PREF
+      );
+      expect(setPrefCalls.map(action => action.data)).toEqual([
+        { name: "widgets.home", value: "[]" },
+      ]);
+    });
+
+    it("should turn widgets off when hiding all in the widget library", () => {
+      const { container, store } = renderWidgets(novaState(), {
+        placement: "library",
+      });
+
+      fireEvent.click(
+        container.querySelector(
+          "panel-item[data-l10n-id='newtab-widget-section-menu-hide-all']"
+        )
+      );
+
+      const names = actionsFrom(store)
+        .filter(action => action?.type === at.SET_PREF)
+        .map(action => action.data.name);
+      expect(names).toContain(PREF_WIDGETS_LISTS_ENABLED);
+      expect(names).not.toContain("widgets.home");
     });
 
     it("should dispatch Learn more actions from the Nova header menu", () => {
