@@ -65,6 +65,13 @@ void GetURLSpecFromChannel(nsITimedChannel* aChannel, nsAString& aSpec) {
   CopyUTF8toUTF16(spec, aSpec);
 }
 
+bool MatchesNameAndType(PerformanceEntry* aEntry, const nsAString& aName,
+                        const Optional<nsAString>& aEntryType) {
+  return aEntry && aEntry->GetName()->Equals(aName) &&
+         (!aEntryType.WasPassed() ||
+          aEntry->GetEntryType()->Equals(aEntryType.Value()));
+}
+
 }  // namespace
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(PerformanceMainThread)
@@ -796,18 +803,15 @@ void PerformanceMainThread::GetEntriesByName(
     nsTArray<RefPtr<PerformanceEntry>>& aRetval) {
   Performance::GetEntriesByName(aName, aEntryType, aRetval);
 
-  if (mFCPTiming && mFCPTiming->GetName()->Equals(aName) &&
-      (!aEntryType.WasPassed() ||
-       mFCPTiming->GetEntryType()->Equals(aEntryType.Value()))) {
+  if (MatchesNameAndType(mFCPTiming, aName, aEntryType)) {
     aRetval.AppendElement(mFCPTiming);
     return;
   }
 
   // The navigation entry is the first one. If it exists and the name matches,
   // let put it in front.
-  if (mDocEntry && mDocEntry->GetName()->Equals(aName)) {
+  if (MatchesNameAndType(mDocEntry, aName, aEntryType)) {
     aRetval.InsertElementAt(0, mDocEntry);
-    return;
   }
 }
 
