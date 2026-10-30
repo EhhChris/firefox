@@ -10786,7 +10786,6 @@ pub unsafe extern "C" fn Servo_Value_Matches_Syntax(
         &mut input,
         &syntax,
         url_data,
-        None,
         AllowComputationallyDependent::Yes,
         /* attr_taint */ Default::default(),
         property_id_ref,
@@ -11536,11 +11535,7 @@ fn compute_arbritrary_substitution_functions(
 
     // Let's check if we have substitution functions (`var()`, `attr()`, `env()`) to handle.
     parser.look_for_arbitrary_substitution_functions(ARBITRARY_SUBSTITUTION_FUNCTIONS);
-    let Ok(variable_value) = VariableValue::parse(
-        &mut parser,
-        Some(&parser_context.namespaces.prefixes),
-        &parser_context.url_data,
-    ) else {
+    let Ok(variable_value) = VariableValue::parse(parser_context, &mut parser) else {
         return None;
     };
 
@@ -11563,20 +11558,18 @@ fn compute_arbritrary_substitution_functions(
             let style::substitution::SubstitutionFunction::Attr(attr) = &reference.function else {
                 return None;
             };
-            let arg = attr.replace_arg(
-                &variable_value,
-                &mut style::substitution::SubstitutionReplacementContext::new(
-                    None,
-                    &substitution_functions,
-                    stylist,
-                    context,
-                    &mut attribute_tracker,
-                ),
+            let mut replacement_context = style::substitution::SubstitutionReplacementContext::new(
+                None,
+                &substitution_functions,
+                stylist,
+                context,
+                &mut attribute_tracker,
             );
+            let arg = attr.replace_arg(&variable_value, &mut replacement_context);
             let arg = arg.value.filter(|arg| arg.has_type())?;
             let value = arg
                 .name
-                .value_for_cycle_resolution(&variable_value.url_data, &mut attribute_tracker)
+                .value_for_cycle_resolution(&mut replacement_context, &variable_value.url_data)
                 .ok()?;
             Some((arg.name.name.clone(), Some(value)))
         })
@@ -11725,7 +11718,7 @@ pub unsafe extern "C" fn Servo_GetComputationSteps(
 
     let property = unsafe { property.as_str_unchecked() };
     let string = unsafe { string.as_str_unchecked() };
-    let mut parser_context = dummy_author_style_rule_context();
+    let parser_context = dummy_author_style_rule_context();
     let property_id = PropertyId::parse(&property, &parser_context).ok();
     let mut substituted = None;
     let element = GeckoElement(raw_element);
@@ -11733,56 +11726,52 @@ pub unsafe extern "C" fn Servo_GetComputationSteps(
     let mut context = ContextForSubstitution::new(element, pseudo_type);
     let context = context.computed_context(&data, style);
 
-    let mut parse_node = |parser_context: &ParserContext| {
-        if let Some(s) = compute_arbritrary_substitution_functions(
-            &string,
-            element,
-            style,
-            &data,
-            &parser_context,
-            &context,
-        ) {
-            // We successfully substituted, let's add the initial string to the result array
-            out.push(nsCString::from(string));
-            // …as well as the substituted string.
-            out.push(nsCString::from(&s));
-            substituted = Some(s.clone());
-        };
+    let node = parser_context.with_property_id(
+        property_id.as_ref().map(PropertyIdRef::from),
+        |parser_context| {
+            if let Some(s) = compute_arbritrary_substitution_functions(
+                &string,
+                element,
+                style,
+                &data,
+                &parser_context,
+                &context,
+            ) {
+                // We successfully substituted, let's add the initial string to the result array
+                out.push(nsCString::from(string));
+                // …as well as the substituted string.
+                out.push(nsCString::from(&s));
+                substituted = Some(s.clone());
+            };
 
-        let substituted_str = substituted.as_deref().unwrap_or(&string);
-        let mut parser = Parser::new(substituted_str);
+            let substituted_str = substituted.as_deref().unwrap_or(&string);
+            let mut parser = Parser::new(substituted_str);
 
-        let flags = CalcParseFlags {
-            percentage_context: PercentageContext::allowed(),
-            in_place_operations: CalcNodeParseInPlaceOperations::No,
-            ..Default::default()
-        };
+            let flags = CalcParseFlags {
+                percentage_context: PercentageContext::allowed(),
+                in_place_operations: CalcNodeParseInPlaceOperations::No,
+                ..Default::default()
+            };
 
-        // Initial parsing
-        Some(match parser.next().ok()? {
-            Token::Function(name) => {
-                let math_func = CalcNode::math_function(&parser_context, name).ok()?;
-                CalcNode::parse(&parser_context, &mut parser, math_func, flags).ok()?
-            },
-            Token::Percentage { unit_value, .. } => CalcNode::Leaf(Leaf::Percentage(
-                CalcPercentageLeaf::new(*unit_value, Optional::None),
-            )),
-            Token::Dimension { value, unit, .. } => {
-                let length =
-                    NoCalcLength::parse_dimension_with_context(&parser_context, *value, unit)
-                        .ok()?;
-                CalcNode::Leaf(Leaf::Length(length))
-            },
-            _ => return None,
-        })
-    };
-
-    let node = match property_id {
-        Some(ref id) => {
-            parser_context.with_property_declaration(PropertyIdRef::from(id), parse_node)
+            // Initial parsing
+            Some(match parser.next().ok()? {
+                Token::Function(name) => {
+                    let math_func = CalcNode::math_function(&parser_context, name).ok()?;
+                    CalcNode::parse(&parser_context, &mut parser, math_func, flags).ok()?
+                },
+                Token::Percentage { unit_value, .. } => CalcNode::Leaf(Leaf::Percentage(
+                    CalcPercentageLeaf::new(*unit_value, Optional::None),
+                )),
+                Token::Dimension { value, unit, .. } => {
+                    let length =
+                        NoCalcLength::parse_dimension_with_context(&parser_context, *value, unit)
+                            .ok()?;
+                    CalcNode::Leaf(Leaf::Length(length))
+                },
+                _ => return None,
+            })
         },
-        None => parse_node(&parser_context),
-    };
+    );
     let Some(mut node) = node else {
         return;
     };
