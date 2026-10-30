@@ -8348,6 +8348,23 @@ static NSMutableSet* gSwizzledFrameViewClasses = nil;
   return [super _validateStyleMask:(aStyleMask & ~keep)] | keep;
 }
 
+// The Picture-in-Picture player is non-activating so that it can float over
+// another application's fullscreen Space (bug 1688932). A click into it should
+// still activate the application like a click into any other window, so that
+// the menu bar and window management follow it.
+- (void)sendEvent:(NSEvent*)anEvent {
+  if (anEvent.type == NSEventTypeLeftMouseDown &&
+      (self.styleMask & NSWindowStyleMaskNonactivatingPanel) &&
+      NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier !=
+          getpid()) {
+    // Make the player key first, so that it stays key once the application is
+    // active.
+    [self makeKeyWindow];
+    [NSApp activateIgnoringOtherApps:YES];
+  }
+  [super sendEvent:anEvent];
+}
+
 // The frame of a window is implemented using undocumented NSView subclasses.
 // We offset the window buttons by overriding the method _closeButtonOrigin on
 // these frame view classes. The class which is
