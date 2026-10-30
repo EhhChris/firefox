@@ -13,39 +13,21 @@ window.MozXULElement?.insertFTLIfNeeded("toolkit/global/mozButton.ftl");
 import "chrome://global/content/elements/moz-label.mjs";
 
 /**
- * Controller for moz-buttons with popovers.
+ * Controls moz-button behavior when menuId property is set.
+ * Helps to integrate moz-button with panel-list.
  */
-class PopoverController {
+class MenuController {
   /** @type {MozButton} */
   host;
 
-  /** @type {HTMLElement | null} */
-  triggerEl = null;
+  /** @type {string | null} */
+  #menuId;
 
   /** @type {HTMLElement | null} */
-  listenerTargetEl = null;
+  #menuEl;
 
-  /** @type {HTMLElement | null} */
-  popoverEl = null;
-
-  /**
-   * @type {string}
-   *
-   * The ID of the popover element.
-   */
-  get popoverTarget() {
-    return this.host.popoverTarget;
-  }
-
-  /**
-   * @type {string}
-   *
-   * The default value of the aria-haspopup attribute that should be set on the
-   * host. Consumers can override this.
-   */
-  get ariaHasPopupDefault() {
-    return "dialog";
-  }
+  /** @type {boolean} */
+  #hostIsSplitButton;
 
   /**
    * @param {MozButton} host
@@ -56,52 +38,60 @@ class PopoverController {
   }
 
   hostConnected() {
-    if (!this.popoverTarget) {
-      return;
-    }
-    this.popoverEl = this.getPopover();
-    if (this.popoverEl) {
-      this.popoverSetUp();
-    }
+    this.hostUpdated();
   }
 
   hostDisconnected() {
-    this.removeListeners();
-    this.popoverEl = null;
+    this.removePanelListListeners();
+    this.#menuId = null;
+    this.#menuEl = null;
+  }
+
+  hostUpdated() {
+    let hostMenuId = this.host.menuId;
+    let hostIsSplitButton = this.host.isSplitButton;
+
+    if (
+      this.#menuId === hostMenuId &&
+      this.#hostIsSplitButton === hostIsSplitButton
+    ) {
+      return;
+    }
+    if (this.#menuEl?.localName == "panel-list") {
+      this.panelListCleanUp();
+    }
+
+    this.#menuId = hostMenuId;
+    this.#hostIsSplitButton = hostIsSplitButton;
+
+    // Check to see if a menuId has been added to host, or changed
+    if (this.#menuId) {
+      this.#menuEl = this.getPanelList();
+
+      if (this.#menuEl?.localName == "panel-list") {
+        this.panelListSetUp();
+      }
+    }
+
+    // Check to see if menuId has been removed from host
+    if (!this.#menuId) {
+      this.#menuEl = null;
+      this.host.removeController(this);
+    }
   }
 
   /**
-   * Gets the element in the host that opens the popover. This should never be
-   * null.
-   *
-   * @returns {HTMLElement}
-   */
-  getTriggerEl() {
-    return this.host.buttonEl;
-  }
-
-  /**
-   * Gets the element that receives the click and mousedown listeners that
-   * toggle the popover.
-   *
-   * @returns {HTMLElement}
-   */
-  getListenerTargetEl() {
-    return this.host;
-  }
-
-  /**
-   * Retrieves the element matching the host's popoverTarget.
+   * Retrieves the panel-list element matching the host's menuId.
    *
    * @returns {HTMLElement | null}
    */
-  getPopover() {
+  getPanelList() {
     let root = this.host.getRootNode();
-    let popoverEl = null;
+    let menuEl = null;
 
     while (root) {
-      popoverEl = root.querySelector?.(`#${this.popoverTarget}`);
-      if (popoverEl) {
+      menuEl = root.querySelector?.(`#${this.#menuId}`);
+      if (menuEl) {
         break;
       }
 
@@ -112,16 +102,15 @@ class PopoverController {
       }
     }
 
-    return popoverEl;
+    return menuEl;
   }
 
   /**
-   * Handles opening/closing the popover when the trigger element is clicked or
-   * activated via the keyboard.
+   * Handles opening/closing the panel-list when the host is clicked or activated via keyboard.
    *
    * @param {MouseEvent|KeyboardEvent} event
    */
-  #trigger = event => {
+  openPanelList = event => {
     if (event.type == "click") {
       event.preventDefault();
     }
@@ -130,122 +119,92 @@ class PopoverController {
       event.inputSource == MouseEvent.MOZ_SOURCE_KEYBOARD ||
       !event.detail
     ) {
-      this.togglePopover(event);
+      if (this.#hostIsSplitButton) {
+        this.#menuEl?.toggle(event, this.host.chevronButtonEl);
+      } else {
+        this.#menuEl?.toggle(event, this.host);
+      }
     }
   };
 
   /**
-   * Toggles the popover.
+   * Listener for shown/hidden that keeps the host's open attribute up to date.
    *
-   * @param {MouseEvent|KeyboardEvent} _event
+   * @param {CustomEvent} event
+   *   The shown or hidden event.
    */
-  togglePopover(_event) {
-    this.popoverEl?.togglePopover();
-  }
-
-  /**
-   * Updates host's open attribute.
-   */
-  #updateOpenAttr = () => {
-    let isOpen = !!this.popoverEl?.matches(":popover-open");
-    this.host.toggleAttribute("open", isOpen);
-    this.host.ariaExpanded = isOpen ? "true" : "false";
+  #updateOpenAttr = event => {
+    if (event.type == "shown") {
+      this.host.toggleAttribute("open", true);
+    } else if (event.type == "hidden") {
+      this.host.removeAttribute("open");
+    }
   };
 
   /**
-   * Removes event listeners.
+   * Removes event listeners related to panel-list.
    */
-  removeListeners() {
-    this.listenerTargetEl?.removeEventListener("click", this.#trigger);
-    this.listenerTargetEl?.removeEventListener("mousedown", this.#trigger);
-    this.popoverEl?.removeEventListener("toggle", this.#updateOpenAttr);
+  removePanelListListeners() {
+    if (this.#hostIsSplitButton) {
+      this.host.chevronButtonEl?.removeEventListener(
+        "click",
+        this.openPanelList
+      );
+      this.host.chevronButtonEl?.removeEventListener(
+        "mousedown",
+        this.openPanelList
+      );
+    } else {
+      this.host.removeEventListener("click", this.openPanelList);
+      this.host.removeEventListener("mousedown", this.openPanelList);
+    }
+    this.#menuEl?.removeEventListener("shown", this.#updateOpenAttr);
+    this.#menuEl?.removeEventListener("hidden", this.#updateOpenAttr);
   }
 
   /**
-   * Sets up the host for integration with the popover,
+   * Sets up the host for integration with panel-list,
    * adding necessary event listeners and ARIA attributes.
    */
-  popoverSetUp() {
-    this.triggerEl = this.getTriggerEl();
-    this.listenerTargetEl = this.getListenerTargetEl();
-    this.listenerTargetEl.addEventListener("click", this.#trigger);
-    this.listenerTargetEl.addEventListener("mousedown", this.#trigger);
-    this.popoverEl.addEventListener("toggle", this.#updateOpenAttr);
-    this.#updateOpenAttr();
-    this.triggerEl.popoverTargetElement = this.popoverEl;
-
-    // Update the host's ariaHasPopup.
-    this.host.requestUpdate();
-  }
-
-  /**
-   * Cleans up popover integration,
-   * removing event listeners and clearing ARIA attributes.
-   */
-  popoverCleanUp() {
-    this.removeListeners();
-    this.host.ariaExpanded = null;
-    this.host.removeAttribute("open");
-    if (this.triggerEl) {
-      this.triggerEl.popoverTargetElement = null;
-      this.triggerEl = null;
+  panelListSetUp() {
+    if (this.#hostIsSplitButton) {
+      this.host.chevronButtonEl?.addEventListener("click", this.openPanelList);
+      this.host.chevronButtonEl?.addEventListener(
+        "mousedown",
+        this.openPanelList
+      );
+    } else {
+      this.host.addEventListener("click", this.openPanelList);
+      this.host.addEventListener("mousedown", this.openPanelList);
     }
-    this.listenerTargetEl = null;
-
-    // Update the host's ariaHasPopup.
-    this.host.requestUpdate();
-  }
-
-  /**
-   * Cleans up the popover integration and detaches from the host.
-   */
-  destroy() {
-    this.popoverCleanUp();
-    this.popoverEl = null;
-    this.host.removeController(this);
-  }
-}
-
-/**
- * Controls moz-button behavior when menuId property is set.
- * Helps to integrate moz-button with panel-list.
- */
-class MenuController extends PopoverController {
-  get popoverTarget() {
-    return this.host.menuId;
-  }
-
-  get ariaHasPopupDefault() {
-    return "menu";
-  }
-
-  getTriggerEl() {
-    return this.host.isSplitButton
+    this.#menuEl.addEventListener("shown", this.#updateOpenAttr);
+    this.#menuEl.addEventListener("hidden", this.#updateOpenAttr);
+    this.host.ariaHasPopup = "menu";
+    this.host.ariaExpanded = this.#menuEl.open ? "true" : "false";
+    this.host.toggleAttribute("open", this.#menuEl.open);
+    let triggerEl = this.#hostIsSplitButton
       ? this.host.chevronButtonEl
       : this.host.buttonEl;
-  }
-
-  getListenerTargetEl() {
-    return this.host.isSplitButton ? this.host.chevronButtonEl : this.host;
-  }
-
-  popoverCleanUp() {
-    if (this.popoverEl?.localName == "panel-list") {
-      super.popoverCleanUp();
+    if (triggerEl) {
+      triggerEl.popoverTargetElement = this.#menuEl;
     }
   }
 
-  popoverSetUp() {
-    if (this.popoverEl?.localName == "panel-list") {
-      super.popoverSetUp();
+  /**
+   * Cleans up panel-list integration,
+   * removing event listeners and clearing ARIA attributes.
+   */
+  panelListCleanUp() {
+    this.removePanelListListeners();
+    this.host.ariaHasPopup = null;
+    this.host.ariaExpanded = null;
+    this.host.removeAttribute("open");
+    let triggerEl = this.#hostIsSplitButton
+      ? this.host.chevronButtonEl
+      : this.host.buttonEl;
+    if (triggerEl) {
+      triggerEl.popoverTargetElement = null;
     }
-  }
-
-  togglePopover(event) {
-    this.popoverEl?.toggle(
-      event,
-      this.host.isSplitButton ? this.host.chevronButtonEl : this.host
-    );
   }
 }
 
@@ -275,8 +234,7 @@ class MenuController extends PopoverController {
  * @property {boolean} parentDisabled - When the parent of this component is disabled.
  * @property {string} iconPosition - The icon's position relative to the button label.
  *   Options: start, end.
- * @property {string} menuId - The ID of the menu element controlled by the button.
- * @property {string} popoverTarget - The ID of the popover element controlled by the button. Either a menuId or popoverTarget may be specified but not both.
+ * @property {string} menuId - A CSS selector string that identifies the associated menu element controlled by the button.
  * @property {HTMLButtonElement} buttonEl - The internal button element in the shadow DOM.
  * @property {HTMLButtonElement} slotEl - The internal slot element in the shadow DOM.
  * @cssproperty [--button-outer-padding-inline] - Used to set the outer inline padding of toolbar style buttons
@@ -315,7 +273,6 @@ export class MozButton extends MozLitElement {
     iconPosition: { type: String, reflect: true },
     menuId: { type: String, reflect: true },
     parentDisabled: { type: Boolean },
-    popoverTarget: { type: String, reflect: true },
   };
 
   static queries = {
@@ -337,43 +294,23 @@ export class MozButton extends MozLitElement {
     this.iconSrc = undefined;
     this.menuId = "";
     this.parentDisabled = undefined;
-    this.popoverTarget = "";
   }
 
   updated(changedProperties) {
     super.updated(changedProperties);
 
-    if (
-      changedProperties.has("menuId") ||
-      changedProperties.has("popoverTarget") ||
-      changedProperties.has("type")
-    ) {
-      // If the button has a menuId, hook up a MenuController. If it has a
-      // popoverTarget, hook up a PopoverController. If it has both, prefer the
-      // menuId.
-      this._popoverController?.destroy();
-      this._popoverController = null;
-      if (this.menuId) {
-        this._popoverController = new MenuController(this);
-      } else if (this.popoverTarget) {
-        this._popoverController = new PopoverController(this);
+    if (changedProperties.has("menuId")) {
+      if (this.menuId && !this._menuController) {
+        this._menuController = new MenuController(this);
+      }
+      if (!this.menuId && this._menuController) {
+        this._menuController = null;
       }
     }
   }
 
   get isSplitButton() {
     return this.type === "split";
-  }
-
-  get ariaHasPopup() {
-    if (this.#ariaHasPopupConsumerValue) {
-      return this.#ariaHasPopupConsumerValue;
-    }
-    return this._popoverController?.ariaHasPopupDefault;
-  }
-
-  set ariaHasPopup(value) {
-    this.#ariaHasPopupConsumerValue = value;
   }
 
   // Delegate clicks on host to the button element.
@@ -481,8 +418,5 @@ export class MozButton extends MozLitElement {
       ${this.chevronButtonTemplate()}
     `;
   }
-
-  /** @type {string} */
-  #ariaHasPopupConsumerValue;
 }
 customElements.define("moz-button", MozButton);
