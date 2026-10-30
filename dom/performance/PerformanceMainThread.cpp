@@ -804,8 +804,7 @@ void PerformanceMainThread::GetEntriesByName(
   Performance::GetEntriesByName(aName, aEntryType, aRetval);
 
   if (MatchesNameAndType(mFCPTiming, aName, aEntryType)) {
-    aRetval.AppendElement(mFCPTiming);
-    return;
+    aRetval.InsertElementSorted(mFCPTiming, PerformanceEntryComparator());
   }
 
   // The navigation entry is the first one. If it exists and the name matches,
