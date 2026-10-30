@@ -647,9 +647,11 @@ pref("browser.urlbar.quicksuggest.impressionCaps.sponsoredEnabled", false);
 // at least this many characters long, it will be shown as a top pick.
 pref("browser.urlbar.quicksuggest.ampTopPickCharThreshold", 5);
 
-// Whether or not use the Nova icon size for AMP suggestion.
-// Otherwise, use standard rich-suggestion size.
-pref("browser.urlbar.quicksuggest.ampTopPickUseNovaIconSize", false);
+// The minimum score a top-pick AMP suggestion must have to be shown with the
+// large-icon UI treatment used for other top picks, as a decimal string (e.g.,
+// "1.0"). If it's an empty string or otherwise can't be parsed with parseFloat,
+// the small-icon UI treatment will be used.
+pref("browser.urlbar.quicksuggest.ampTopPickScoreForLargeIcon", "");
 
 // The matching strategy for AMP suggestions. Zero is the usual default
 // exact-keyword strategy. Other values are the integers defined on
