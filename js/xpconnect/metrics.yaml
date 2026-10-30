@@ -1014,6 +1014,7 @@ script.preloader:
       - dothayer@mozilla.com
       - plawless@mozilla.com
     expires: never
+    telemetry_mirror: SCRIPT_PRELOADER_MAINTHREAD_RECOMPILE
 
   wait_time:
     type: timing_distribution
@@ -1041,3 +1042,4 @@ script.preloader:
       - dothayer@mozilla.com
       - plawless@mozilla.com
     expires: never
+    telemetry_mirror: SCRIPT_PRELOADER_WAIT_TIME
