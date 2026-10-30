@@ -2867,7 +2867,11 @@ nsresult MediaFormatReader::ResetDecode(const TrackSet& aTracks) {
   LOGV("");
 
   mSeekPromise.RejectIfExists(NS_OK, __func__);
-  mSkipRequest.DisconnectIfExists();
+  // The skip serves a pending video request, which is only rejected when video
+  // is reset.
+  if (aTracks.contains(TrackInfo::kVideoTrack)) {
+    mSkipRequest.DisconnectIfExists();
+  }
 
   // Do the same for any data wait promises.
   if (aTracks.contains(TrackInfo::kAudioTrack)) {
