@@ -903,17 +903,19 @@ TEST_F(StaleSeekTest, VideoRequestAfterAudioOnlySeekWithStaleVideoSeek) {
   CompleteDemuxerSeek(mVideoSeekPromise);
 }
 
-// A decoder whose Flush() and Shutdown() the test hooks.
+// A decoder whose Flush(), Decode() and Shutdown() the test hooks.
 class HookedDecoder final : public DummyMediaDataDecoder {
  public:
   using FlushHook = std::function<RefPtr<FlushPromise>()>;
+  using DecodeHook = std::function<RefPtr<DecodePromise>()>;
   using ShutdownHook = std::function<void()>;
 
   HookedDecoder(UniquePtr<DummyDataCreator>&& aCreator,
                 const CreateDecoderParams& aParams, FlushHook aFlushHook,
-                ShutdownHook aShutdownHook)
+                DecodeHook aDecodeHook, ShutdownHook aShutdownHook)
       : DummyMediaDataDecoder(std::move(aCreator), "HookedDecoder"_ns, aParams),
         mFlushHook(std::move(aFlushHook)),
+        mDecodeHook(std::move(aDecodeHook)),
         mShutdownHook(std::move(aShutdownHook)) {}
 
   RefPtr<ShutdownPromise> Shutdown() override {
@@ -928,8 +930,16 @@ class HookedDecoder final : public DummyMediaDataDecoder {
     return DummyMediaDataDecoder::Flush();
   }
 
+  RefPtr<DecodePromise> Decode(MediaRawData* aSample) override {
+    if (RefPtr<DecodePromise> p = mDecodeHook()) {
+      return p;
+    }
+    return DummyMediaDataDecoder::Decode(aSample);
+  }
+
  private:
   const FlushHook mFlushHook;
+  const DecodeHook mDecodeHook;
   const ShutdownHook mShutdownHook;
 };
 
@@ -977,6 +987,9 @@ class FlushErrorAfterResetTest : public TestMediaFormatReader {
                   aParams.mImageContainer),
               aParams,
               [this]() { return HoldFlushIfRequested(TrackType::kVideoTrack); },
+              [this]() {
+                return FailDecodeIfRequested(TrackType::kVideoTrack);
+              },
               [this]() { ++mDecoderShutdownCount; }));
         });
     ON_CALL(*mPdm, CreateAudioDecoder)
@@ -986,6 +999,9 @@ class FlushErrorAfterResetTest : public TestMediaFormatReader {
                   aParams.AudioConfig().mChannels, aParams.AudioConfig().mRate),
               aParams,
               [this]() { return HoldFlushIfRequested(TrackType::kAudioTrack); },
+              [this]() {
+                return FailDecodeIfRequested(TrackType::kAudioTrack);
+              },
               [this]() { ++mDecoderShutdownCount; }));
         });
   }
@@ -1029,12 +1045,37 @@ class FlushErrorAfterResetTest : public TestMediaFormatReader {
     return p;
   }
 
+  RefPtr<MediaDataDecoder::DecodePromise> FailDecodeIfRequested(
+      TrackType aTrack) {
+    if (!mFailDecodeTrack.compareExchange(aTrack, TrackType::kUndefinedTrack)) {
+      return nullptr;
+    }
+    mDecoderThread = do_QueryObject(AbstractThread::GetCurrent());
+    MOZ_RELEASE_ASSERT(mDecoderThread);
+    mDecodeFailed = true;
+    WakeMainThread();
+    return MediaDataDecoder::DecodePromise::CreateAndReject(kDecoderCrash,
+                                                            __func__);
+  }
+
   // Read metadata and decode one frame of each track, so that both decoders
   // exist and have cleared their first-frame state.
   void DecodeFirstFrames() {
     (void)WaitForResolve(mProxy->ReadMetadata());
     (void)WaitForResolve(mProxy->RequestAudioData());
     (void)WaitForResolve(mProxy->RequestVideoData(TimeUnit(), false));
+  }
+
+  // Reset both tracks and seek them, as AccurateSeekingState::DoSeek() does,
+  // holding the flush that the reset starts on aTrack's decoder.
+  RefPtr<MediaFormatReader::SeekPromise> ResetAndSeekAllTracks(
+      TrackType aTrack) {
+    mHeldFlushTrack = aTrack;
+    mProxy->ResetDecode(MediaFormatReader::TrackSet(TrackType::kAudioTrack,
+                                                    TrackType::kVideoTrack));
+    RefPtr p = SeekTrack(SeekTarget::Track::All);
+    SpinEventLoopUntil("flush held"_ns, [&]() { return bool(mFlushHeld); });
+    return p;
   }
 
   // Rewind one track as seamless looping does, holding its decoder's flush.
@@ -1052,6 +1093,25 @@ class FlushErrorAfterResetTest : public TestMediaFormatReader {
   RefPtr<MediaFormatReader::SeekPromise> SeekTrack(SeekTarget::Track aTrack) {
     return mProxy->Seek(
         SeekTarget(TimeUnit::Zero(), SeekTarget::Accurate, aTrack));
+  }
+
+  // Also waits for any demuxer seek that the reader starts in response.
+  void NotifyDataArrived() {
+    EXPECT_NS_SUCCEEDED(mReader->OwnerThread()->Dispatch(
+        NewRunnableMethod("NotifyDataArrived", mReader.get(),
+                          &MediaFormatReader::NotifyDataArrived)));
+    mReader->OwnerThread()->AwaitIdle();
+    mDemuxerThread->AwaitIdle();
+    mReader->OwnerThread()->AwaitIdle();
+    mDemuxerThread->AwaitIdle();
+  }
+
+  // Models AccurateSeekingState::OnSeekRejected()'s reset before a retry. No
+  // test here drives MediaDecoderStateMachine, so none catch it regressing.
+  RefPtr<MediaFormatReader::SeekPromise> ResetAndRetrySeekAllTracks() {
+    mProxy->ResetDecode(MediaFormatReader::TrackSet(TrackType::kAudioTrack,
+                                                    TrackType::kVideoTrack));
+    return SeekTrack(SeekTarget::Track::All);
   }
 
   // Wait for the reader to handle a decoder error. The error reaches the
@@ -1072,10 +1132,39 @@ class FlushErrorAfterResetTest : public TestMediaFormatReader {
     AwaitErrorHandled();
   }
 
+  // Make demuxer seeks pending until CompleteHeldSeek().
+  void HoldDemuxerSeeks() {
+    mVideoSeekHook = [this](const TimeUnit&) {
+      return mHeldVideoSeek.Ensure(__func__);
+    };
+    mAudioSeekHook = [this](const TimeUnit&) {
+      return mHeldAudioSeek.Ensure(__func__);
+    };
+  }
+
   void CompleteHeldSeek(MozPromiseHolder<SeekPromise>& aHolder) {
     EXPECT_NS_SUCCEEDED(mDemuxerThread->Dispatch(NS_NewRunnableFunction(
         "CompleteSeek",
         [&aHolder] { aHolder.Resolve(TimeUnit::Zero(), __func__); })));
+  }
+
+  void RejectHeldSeek(MozPromiseHolder<SeekPromise>& aHolder, nsresult aError) {
+    EXPECT_NS_SUCCEEDED(mDemuxerThread->Dispatch(NS_NewRunnableFunction(
+        "RejectSeek",
+        [&aHolder, aError] { aHolder.Reject(aError, __func__); })));
+  }
+
+  // Make the first demuxer seek of a track wait for data, and later ones
+  // succeed.
+  static std::function<RefPtr<SeekPromise>(const TimeUnit&)>
+  FirstSeekWaitsForData(Atomic<int>& aSeekCount) {
+    return [&aSeekCount](const TimeUnit& aTime) {
+      if (aSeekCount == 1) {
+        return SeekPromise::CreateAndReject(NS_ERROR_DOM_MEDIA_WAITING_FOR_DATA,
+                                            __func__);
+      }
+      return SeekPromise::CreateAndResolve(aTime, __func__);
+    };
   }
 
   // Seek number aWaitingSeek (from 1, 0 for none) waits for data and aHeldSeek
@@ -1111,6 +1200,8 @@ class FlushErrorAfterResetTest : public TestMediaFormatReader {
   Atomic<TrackType> mHeldFlushTrack{TrackType::kUndefinedTrack};
   Atomic<bool> mFlushHeld{false};
   MozPromiseHolder<MediaDataDecoder::FlushPromise> mHeldFlush;
+  Atomic<TrackType> mFailDecodeTrack{TrackType::kUndefinedTrack};
+  Atomic<bool> mDecodeFailed{false};
   Atomic<int> mDecoderShutdownCount{0};
   Maybe<MediaFormatReader::AudioDataPromise::ResolveOrRejectValue> mAudioResult;
 };
@@ -1157,6 +1248,333 @@ TEST_F(FlushErrorAfterResetTest,
   ASSERT_TRUE(mAudioResult.isSome());
   ASSERT_TRUE(mAudioResult->IsResolve());
   EXPECT_EQ(mAudioResult->ResolveValue()->mTime, TimeUnit::Zero());
+}
+
+// An audio decoder error that completes while the video demuxer seek of an
+// all-tracks seek is in flight must not start an audio internal seek, which
+// the seek would then collide with when it moves on to the audio track.
+TEST_F(FlushErrorAfterResetTest, AudioDoesNotInternalSeekDuringVideoSeek) {
+  PDMFactory::AutoForcePDM autoForcePDM(mPdm);
+  HoldDemuxerSeeks();
+  DecodeFirstFrames();
+
+  RefPtr seek = ResetAndSeekAllTracks(TrackType::kAudioTrack);
+  SpinEventLoopUntil("video seek started"_ns,
+                     [&]() { return mVideoSeekCount >= 1; });
+
+  FailHeldFlush();
+  // The crash makes the reader replace the decoder.
+  EXPECT_EQ(static_cast<int>(mDecoderShutdownCount), 1);
+  EXPECT_EQ(static_cast<int>(mAudioSeekCount), 0);
+
+  CompleteHeldSeek(mHeldVideoSeek);
+  SpinEventLoopUntil("audio seek started"_ns,
+                     [&]() { return mAudioSeekCount >= 1; });
+  CompleteHeldSeek(mHeldAudioSeek);
+  EXPECT_EQ(WaitForResolve(seek), TimeUnit::Zero());
+  EXPECT_EQ(static_cast<int>(mAudioSeekCount), 1);
+}
+
+// The video track of an all-tracks seek is still being sought after its own
+// demuxer seek completes, so a video decoder error that completes while the
+// audio demuxer seek is in flight must not start a video internal seek.
+TEST_F(FlushErrorAfterResetTest, VideoDoesNotInternalSeekDuringAudioSeek) {
+  PDMFactory::AutoForcePDM autoForcePDM(mPdm);
+  mAudioSeekHook = [this](const TimeUnit&) {
+    return mHeldAudioSeek.Ensure(__func__);
+  };
+  DecodeFirstFrames();
+
+  RefPtr seek = ResetAndSeekAllTracks(TrackType::kVideoTrack);
+  SpinEventLoopUntil("audio seek started"_ns,
+                     [&]() { return mAudioSeekCount >= 1; });
+  EXPECT_EQ(static_cast<int>(mVideoSeekCount), 1);
+
+  FailHeldFlush();
+  // The crash makes the reader replace the decoder.
+  EXPECT_EQ(static_cast<int>(mDecoderShutdownCount), 1);
+  EXPECT_EQ(static_cast<int>(mVideoSeekCount), 1);
+
+  CompleteHeldSeek(mHeldAudioSeek);
+  EXPECT_EQ(WaitForResolve(seek), TimeUnit::Zero());
+  EXPECT_EQ(static_cast<int>(mVideoSeekCount), 1);
+}
+
+// While an all-tracks seek waits for data, the reader may recover from an
+// audio decoder error by seeking the track itself. This models
+// AccurateSeekingState resetting the sought tracks again before it retries, so
+// the retry must succeed while that recovery seek is still in flight.
+TEST_F(FlushErrorAfterResetTest, AudioErrorWhileSeekWaitsDoesNotBreakRetry) {
+  PDMFactory::AutoForcePDM autoForcePDM(mPdm);
+  mVideoSeekHook = FirstSeekWaitsForData(mVideoSeekCount);
+  mAudioSeekHook = SeekSequence(mAudioSeekCount, /* aWaitingSeek */ 0,
+                                /* aHeldSeek */ 1, mHeldAudioSeek);
+  DecodeFirstFrames();
+
+  SeekRejectValue rejection =
+      WaitForReject(ResetAndSeekAllTracks(TrackType::kAudioTrack));
+  EXPECT_EQ(rejection.mError.Code(), NS_ERROR_DOM_MEDIA_WAITING_FOR_DATA);
+
+  FailHeldFlush();
+  // The crash makes the reader replace the decoder and seek the track back.
+  EXPECT_EQ(static_cast<int>(mDecoderShutdownCount), 1);
+  EXPECT_EQ(static_cast<int>(mAudioSeekCount), 1);
+
+  EXPECT_EQ(WaitForResolve(ResetAndRetrySeekAllTracks()), TimeUnit::Zero());
+  CompleteHeldSeek(mHeldAudioSeek);
+  mDemuxerThread->AwaitIdle();
+}
+
+// As above, for a video decoder error.
+TEST_F(FlushErrorAfterResetTest, VideoErrorWhileSeekWaitsDoesNotBreakRetry) {
+  PDMFactory::AutoForcePDM autoForcePDM(mPdm);
+  mVideoSeekHook = SeekSequence(mVideoSeekCount, /* aWaitingSeek */ 1,
+                                /* aHeldSeek */ 2, mHeldVideoSeek);
+  DecodeFirstFrames();
+
+  SeekRejectValue rejection =
+      WaitForReject(ResetAndSeekAllTracks(TrackType::kVideoTrack));
+  EXPECT_EQ(rejection.mError.Code(), NS_ERROR_DOM_MEDIA_WAITING_FOR_DATA);
+
+  FailHeldFlush();
+  // The crash makes the reader replace the decoder and seek the track back.
+  EXPECT_EQ(static_cast<int>(mDecoderShutdownCount), 1);
+  EXPECT_EQ(static_cast<int>(mVideoSeekCount), 2);
+
+  EXPECT_EQ(WaitForResolve(ResetAndRetrySeekAllTracks()), TimeUnit::Zero());
+  CompleteHeldSeek(mHeldVideoSeek);
+  mDemuxerThread->AwaitIdle();
+}
+
+// As above, for a video decoder error while the audio half of the seek waits
+// for data, after the video half has completed.
+TEST_F(FlushErrorAfterResetTest,
+       VideoErrorWhileAudioSeekWaitsDoesNotBreakRetry) {
+  PDMFactory::AutoForcePDM autoForcePDM(mPdm);
+  mAudioSeekHook = FirstSeekWaitsForData(mAudioSeekCount);
+  mVideoSeekHook = SeekSequence(mVideoSeekCount, /* aWaitingSeek */ 0,
+                                /* aHeldSeek */ 2, mHeldVideoSeek);
+  DecodeFirstFrames();
+
+  SeekRejectValue rejection =
+      WaitForReject(ResetAndSeekAllTracks(TrackType::kVideoTrack));
+  EXPECT_EQ(rejection.mError.Code(), NS_ERROR_DOM_MEDIA_WAITING_FOR_DATA);
+
+  FailHeldFlush();
+  // The crash makes the reader replace the decoder and seek the track back.
+  EXPECT_EQ(static_cast<int>(mDecoderShutdownCount), 1);
+  EXPECT_EQ(static_cast<int>(mVideoSeekCount), 2);
+
+  EXPECT_EQ(WaitForResolve(ResetAndRetrySeekAllTracks()), TimeUnit::Zero());
+  CompleteHeldSeek(mHeldVideoSeek);
+  mDemuxerThread->AwaitIdle();
+}
+
+// Once its seek has completed, a track recovers from a decoder error by
+// seeking back to its first frame.
+TEST_F(FlushErrorAfterResetTest, AudioRecoversAfterSeek) {
+  PDMFactory::AutoForcePDM autoForcePDM(mPdm);
+  DecodeFirstFrames();
+  mProxy->ResetDecode(MediaFormatReader::TrackSet(TrackType::kAudioTrack,
+                                                  TrackType::kVideoTrack));
+  EXPECT_EQ(WaitForResolve(SeekTrack(SeekTarget::Track::All)),
+            TimeUnit::Zero());
+  EXPECT_EQ(static_cast<int>(mAudioSeekCount), 1);
+
+  mFailDecodeTrack = TrackType::kAudioTrack;
+  EXPECT_EQ(WaitForResolve(mProxy->RequestAudioData())->mTime,
+            TimeUnit::Zero());
+  EXPECT_TRUE(mDecodeFailed);
+  EXPECT_EQ(static_cast<int>(mAudioSeekCount), 2);
+}
+
+// A track that is read after its seek was rejected while waiting for data, as
+// seamless looping does, has no seek pending, so it recovers from a decoder
+// error by seeking back to its first frame.
+TEST_F(FlushErrorAfterResetTest, AudioRecoversWhenReadWithoutSeek) {
+  PDMFactory::AutoForcePDM autoForcePDM(mPdm);
+  mAudioSeekHook = FirstSeekWaitsForData(mAudioSeekCount);
+  DecodeFirstFrames();
+  mProxy->ResetDecode(MediaFormatReader::TrackSet(TrackType::kAudioTrack));
+  (void)WaitForReject(SeekTrack(SeekTarget::Track::AudioOnly));
+  // Data arrives, so the looping state requests audio again.
+  NotifyDataArrived();
+
+  mFailDecodeTrack = TrackType::kAudioTrack;
+  mProxy->RequestAudioData()->Then(
+      AbstractThread::MainThread(), __func__,
+      [this](
+          MediaFormatReader::AudioDataPromise::ResolveOrRejectValue&& aValue) {
+        mAudioResult.emplace(std::move(aValue));
+      });
+  SpinEventLoopUntil("decode failed"_ns, [&]() {
+    return bool(mDecodeFailed) || mAudioResult.isSome();
+  });
+  ASSERT_TRUE(mDecodeFailed);
+  AwaitErrorHandled();
+  ASSERT_EQ(static_cast<int>(mAudioSeekCount), 2);
+
+  SpinEventLoopUntil("audio request settled"_ns,
+                     [&]() { return mAudioResult.isSome(); });
+  ASSERT_TRUE(mAudioResult->IsResolve());
+  EXPECT_EQ(mAudioResult->ResolveValue()->mTime, TimeUnit::Zero());
+}
+
+// The track a single-track seek does not cover recovers from a decoder error
+// by seeking itself: here audio during a video-only seek.
+TEST_F(FlushErrorAfterResetTest, AudioRecoversDuringVideoOnlySeek) {
+  PDMFactory::AutoForcePDM autoForcePDM(mPdm);
+  mVideoSeekHook = [this](const TimeUnit&) {
+    return mHeldVideoSeek.Ensure(__func__);
+  };
+  DecodeFirstFrames();
+  EXPECT_EQ(
+      WaitForResolve(ResetAndSeekTrackHoldingFlush(TrackType::kAudioTrack)),
+      TimeUnit::Zero());
+  RefPtr audio = mProxy->RequestAudioData();
+  mProxy->ResetDecode(MediaFormatReader::TrackSet(TrackType::kVideoTrack));
+  RefPtr videoOnlySeek = SeekTrack(SeekTarget::Track::VideoOnly);
+  SpinEventLoopUntil("video seek started"_ns,
+                     [&]() { return mVideoSeekCount >= 1; });
+  // New data must not make the seek handle the audio track.
+  NotifyDataArrived();
+
+  FailHeldFlush();
+  EXPECT_EQ(static_cast<int>(mDecoderShutdownCount), 1);
+  EXPECT_EQ(static_cast<int>(mAudioSeekCount), 2);
+  EXPECT_EQ(WaitForResolve(audio)->mTime, TimeUnit::Zero());
+
+  CompleteHeldSeek(mHeldVideoSeek);
+  EXPECT_EQ(WaitForResolve(videoOnlySeek), TimeUnit::Zero());
+  EXPECT_EQ(static_cast<int>(mVideoSeekCount), 1);
+}
+
+// As above, for video during an audio-only seek.
+TEST_F(FlushErrorAfterResetTest, VideoRecoversDuringAudioOnlySeek) {
+  PDMFactory::AutoForcePDM autoForcePDM(mPdm);
+  mAudioSeekHook = [this](const TimeUnit&) {
+    return mHeldAudioSeek.Ensure(__func__);
+  };
+  DecodeFirstFrames();
+  EXPECT_EQ(
+      WaitForResolve(ResetAndSeekTrackHoldingFlush(TrackType::kVideoTrack)),
+      TimeUnit::Zero());
+  RefPtr video = mProxy->RequestVideoData(TimeUnit::Zero(), false);
+  mProxy->ResetDecode(MediaFormatReader::TrackSet(TrackType::kAudioTrack));
+  RefPtr audioOnlySeek = SeekTrack(SeekTarget::Track::AudioOnly);
+  SpinEventLoopUntil("audio seek started"_ns,
+                     [&]() { return mAudioSeekCount >= 1; });
+  // New data must not make the seek handle the video track.
+  NotifyDataArrived();
+
+  FailHeldFlush();
+  EXPECT_EQ(static_cast<int>(mDecoderShutdownCount), 1);
+  EXPECT_EQ(static_cast<int>(mVideoSeekCount), 2);
+  EXPECT_EQ(WaitForResolve(video)->mTime, TimeUnit::Zero());
+
+  CompleteHeldSeek(mHeldAudioSeek);
+  EXPECT_EQ(WaitForResolve(audioOnlySeek), TimeUnit::Zero());
+  EXPECT_EQ(static_cast<int>(mAudioSeekCount), 1);
+}
+
+// A single-track seek can wait for data while the other track recovers.
+TEST_F(FlushErrorAfterResetTest, VideoOnlySeekWaitsForDataWhileAudioRecovers) {
+  PDMFactory::AutoForcePDM autoForcePDM(mPdm);
+  mAudioSeekHook = SeekSequence(mAudioSeekCount, /* aWaitingSeek */ 0,
+                                /* aHeldSeek */ 2, mHeldAudioSeek);
+  mVideoSeekHook = SeekSequence(mVideoSeekCount, /* aWaitingSeek */ 0,
+                                /* aHeldSeek */ 1, mHeldVideoSeek);
+  DecodeFirstFrames();
+  EXPECT_EQ(
+      WaitForResolve(ResetAndSeekTrackHoldingFlush(TrackType::kAudioTrack)),
+      TimeUnit::Zero());
+  RefPtr audio = mProxy->RequestAudioData();
+  mProxy->ResetDecode(MediaFormatReader::TrackSet(TrackType::kVideoTrack));
+  RefPtr videoOnlySeek = SeekTrack(SeekTarget::Track::VideoOnly);
+  SpinEventLoopUntil("video seek started"_ns,
+                     [&]() { return mVideoSeekCount >= 1; });
+
+  FailHeldFlush();
+  EXPECT_EQ(static_cast<int>(mDecoderShutdownCount), 1);
+  ASSERT_EQ(static_cast<int>(mAudioSeekCount), 2);
+
+  RejectHeldSeek(mHeldVideoSeek, NS_ERROR_DOM_MEDIA_WAITING_FOR_DATA);
+  SeekRejectValue rejection = WaitForReject(videoOnlySeek);
+  EXPECT_EQ(rejection.mError.Code(), NS_ERROR_DOM_MEDIA_WAITING_FOR_DATA);
+
+  mProxy->ResetDecode(MediaFormatReader::TrackSet(TrackType::kVideoTrack));
+  EXPECT_EQ(WaitForResolve(SeekTrack(SeekTarget::Track::VideoOnly)),
+            TimeUnit::Zero());
+  CompleteHeldSeek(mHeldAudioSeek);
+  EXPECT_EQ(WaitForResolve(audio)->mTime, TimeUnit::Zero());
+}
+
+// The uncovered track's recovery seek waits for data and is retried when data
+// arrives, as in bug 2076235: here video during an audio-only seek.
+TEST_F(FlushErrorAfterResetTest,
+       VideoRecoveryWaitingForDataDuringAudioOnlySeek) {
+  PDMFactory::AutoForcePDM autoForcePDM(mPdm);
+  mAudioSeekHook = [this](const TimeUnit&) {
+    return mHeldAudioSeek.Ensure(__func__);
+  };
+  mVideoSeekHook = SeekSequence(mVideoSeekCount, /* aWaitingSeek */ 2,
+                                /* aHeldSeek */ 0, mHeldVideoSeek);
+  DecodeFirstFrames();
+  EXPECT_EQ(
+      WaitForResolve(ResetAndSeekTrackHoldingFlush(TrackType::kVideoTrack)),
+      TimeUnit::Zero());
+  RefPtr video = mProxy->RequestVideoData(TimeUnit::Zero(), false);
+  mProxy->ResetDecode(MediaFormatReader::TrackSet(TrackType::kAudioTrack));
+  RefPtr audioOnlySeek = SeekTrack(SeekTarget::Track::AudioOnly);
+  SpinEventLoopUntil("audio seek started"_ns,
+                     [&]() { return mAudioSeekCount >= 1; });
+
+  FailHeldFlush();
+  ASSERT_EQ(static_cast<int>(mVideoSeekCount), 2);
+  EXPECT_EQ(WaitForReject(video).Code(), NS_ERROR_DOM_MEDIA_WAITING_FOR_DATA);
+
+  NotifyDataArrived();
+  ASSERT_EQ(static_cast<int>(mVideoSeekCount), 3);
+
+  CompleteHeldSeek(mHeldAudioSeek);
+  EXPECT_EQ(WaitForResolve(audioOnlySeek), TimeUnit::Zero());
+  EXPECT_EQ(
+      WaitForResolve(mProxy->RequestVideoData(TimeUnit::Zero(), false))->mTime,
+      TimeUnit::Zero());
+  EXPECT_EQ(static_cast<int>(mAudioSeekCount), 1);
+}
+
+// As above, for audio during a video-only seek.
+TEST_F(FlushErrorAfterResetTest,
+       AudioRecoveryWaitingForDataDuringVideoOnlySeek) {
+  PDMFactory::AutoForcePDM autoForcePDM(mPdm);
+  mVideoSeekHook = [this](const TimeUnit&) {
+    return mHeldVideoSeek.Ensure(__func__);
+  };
+  mAudioSeekHook = SeekSequence(mAudioSeekCount, /* aWaitingSeek */ 2,
+                                /* aHeldSeek */ 0, mHeldAudioSeek);
+  DecodeFirstFrames();
+  EXPECT_EQ(
+      WaitForResolve(ResetAndSeekTrackHoldingFlush(TrackType::kAudioTrack)),
+      TimeUnit::Zero());
+  RefPtr audio = mProxy->RequestAudioData();
+  mProxy->ResetDecode(MediaFormatReader::TrackSet(TrackType::kVideoTrack));
+  RefPtr videoOnlySeek = SeekTrack(SeekTarget::Track::VideoOnly);
+  SpinEventLoopUntil("video seek started"_ns,
+                     [&]() { return mVideoSeekCount >= 1; });
+
+  FailHeldFlush();
+  ASSERT_EQ(static_cast<int>(mAudioSeekCount), 2);
+  EXPECT_EQ(WaitForReject(audio).Code(), NS_ERROR_DOM_MEDIA_WAITING_FOR_DATA);
+
+  NotifyDataArrived();
+  ASSERT_EQ(static_cast<int>(mAudioSeekCount), 3);
+
+  CompleteHeldSeek(mHeldVideoSeek);
+  EXPECT_EQ(WaitForResolve(videoOnlySeek), TimeUnit::Zero());
+  EXPECT_EQ(WaitForResolve(mProxy->RequestAudioData())->mTime,
+            TimeUnit::Zero());
+  EXPECT_EQ(static_cast<int>(mVideoSeekCount), 1);
 }
 
 class RecreateOnNthDecodeDecoder final : public MockVideoDataDecoder {
