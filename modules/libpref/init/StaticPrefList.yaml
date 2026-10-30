@@ -6196,6 +6196,13 @@
   value: true
   mirror: always
 
+# If true, when copying, the inline style attribute is normalized by being
+# serialized from its parsed declaration block.
+- name: dom.serializer.normalize_inline_style_when_copying.enabled
+  type: bool
+  value: true
+  mirror: always
+
 # When this pref is enabled:
 #  - Shadow DOM is not pierced by default anymore
 #  - The method accepts optional CaretPositionFromPointOptions to allow piercing
