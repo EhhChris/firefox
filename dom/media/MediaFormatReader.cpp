@@ -2866,7 +2866,18 @@ nsresult MediaFormatReader::ResetDecode(const TrackSet& aTracks) {
   MOZ_ASSERT(OnTaskQueue());
   LOGV("");
 
+  // Abandoning the seek in progress also cancels its demuxer seeks, including
+  // on tracks that are not reset, so that they cannot complete against a later
+  // seek. Internal seeks are left to complete on tracks that are not reset.
   mSeekPromise.RejectIfExists(NS_OK, __func__);
+  if (mVideo.mSeekRequest.Exists() && !mVideo.mTimeThreshold) {
+    mVideo.mSeekRequest.Disconnect();
+    ScheduleUpdate(TrackInfo::kVideoTrack);
+  }
+  if (mAudio.mSeekRequest.Exists() && !mAudio.mTimeThreshold) {
+    mAudio.mSeekRequest.Disconnect();
+    ScheduleUpdate(TrackInfo::kAudioTrack);
+  }
   // The skip serves a pending video request, which is only rejected when video
   // is reset.
   if (aTracks.contains(TrackInfo::kVideoTrack)) {
