@@ -6348,12 +6348,15 @@
 # form `*.DOMAIN` blocks all subdomains of `DOMAIN`. It is interpreted
 # by `nsContentUtils::IsURIInList`.
 #
+# For example, for bug 1980392, this pref had the value
+# "easyeda.com,*.easyeda.com".
+#
 # Bugs for the current default contents:
 #
-# easyeda.com: 1980392
+# <none at the moment>
 - name: dom.webgpu.blocked-domains
   type: DataMutexString
-  value: "easyeda.com,*.easyeda.com"
+  value: ""
   mirror: always
 
 # Is support for HTMLInputElement.webkitEntries enabled?
