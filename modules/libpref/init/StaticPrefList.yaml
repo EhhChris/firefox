@@ -6337,6 +6337,10 @@
 
 # Domains for which WebGPU is disabled.
 #
+# This is useful for working around web compatibility problems, but
+# because it checks the global's base URI, which content can change
+# freely, it's not suitable for dealing with bad actors.
+#
 # If `nsIGlobalObject::GetBaseURI` returns a base URI in this list,
 # then `GPU::requestAdapter` always rejects.
 #
