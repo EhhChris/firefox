@@ -28,7 +28,6 @@
 #include "vm/SharedStencil.h"  // js::GCThingIndex
 #include "vm/StringType.h"     // js::IdToPrintableUTF8
 #include "wasm/WasmJS.h"       // js::WasmModuleObject
-#include "wasm/WasmModule.h"   // js::wasm::Module
 
 #include "gc/GCContext-inl.h"
 #include "gc/StableCellHasher-inl.h"
@@ -518,7 +517,7 @@ bool ModuleNamespaceObject::addBinding(JSContext* cx,
 
 constexpr char ModuleNamespaceObject::ProxyHandler::family = 0;
 
-void js::ReportUninitializedModuleBinding(JSContext* cx, HandleId id) {
+static void ReportUninitializedModuleBinding(JSContext* cx, HandleId id) {
   // Module export names are property keys and may not be identifier names,
   // so use IdIsPropertyKey rather than IdIsIdentifier.
   if (UniqueChars printable =
@@ -1309,25 +1308,6 @@ JSObject* ModuleObject::moduleSource() const {
   return &value.toObject();
 }
 
-bool ModuleObject::isWasmModule() const {
-  JSObject* source = moduleSource();
-  return source && source->is<WasmModuleObject>();
-}
-
-#ifdef NIGHTLY_BUILD
-JSObject* ModuleObject::wasmInstance() const {
-  Value value = getReservedSlotTyped(WASM_INSTANCE_SLOT);
-  if (value.isUndefined()) {
-    return nullptr;
-  }
-  return &value.toObject();
-}
-
-void ModuleObject::setWasmInstance(JSObject* instance) {
-  setReservedSlotTyped(WASM_INSTANCE_SLOT, ObjectValue(*instance));
-}
-#endif
-
 void ModuleObject::initAsyncSlots(JSContext* cx, bool hasTopLevelAwait,
                                   Handle<ListObject*> asyncParentModules) {
   cyclicModuleFields()->hasTopLevelAwait = hasTopLevelAwait;
@@ -1420,11 +1400,9 @@ const char* ModuleObject::filename() const {
   }
   ScriptSourceObject* sso = cyclicModuleFields()->scriptSourceObject;
   if (!sso->hasSource()) {
-    MOZ_ASSERT(isWasmModule());
-    const wasm::Module& module =
-        moduleSource()->as<WasmModuleObject>().module();
-    const char* source = module.codeMeta().scriptedCaller().source.get();
-    return source ? source : "(unknown)";
+    // TODO: Bug 2030454: Return the wasm module filename once we support
+    // evaluation phase imports.
+    return "(unknown)";
   }
   return sso->source()->filename();
 }
@@ -1704,11 +1682,6 @@ bool ModuleObject::execute(JSContext* cx, Handle<ModuleObject*> self) {
     return false;
   }
 #endif
-#ifdef NIGHTLY_BUILD
-  if (self->isWasmModule()) {
-    return WasmModuleExecute(cx, self);
-  }
-#endif
 
   RootedScript script(cx, self->script());
 
@@ -1814,37 +1787,13 @@ bool ModuleObject::createSyntheticEnvironment(JSContext* cx,
 }
 
 /* static */
-void ModuleObject::initWasmExportBindings(JSContext* cx,
-                                          Handle<ModuleObject*> self,
-                                          JS::HandleVector<Value> values) {
-  Rooted<ModuleEnvironmentObject*> env(cx, &self->initialEnvironment());
-
-  // The exports occupy the slots after the *namespace* binding.
-  MOZ_ASSERT(env->slotSpan() ==
-             env->firstSyntheticValueSlot() + values.length());
-
-  for (uint32_t i = 0; i < values.length(); i++) {
-    env->setAliasedBinding(env->firstSyntheticValueSlot() + i, values[i]);
-  }
-}
-
-/* static */
 bool ModuleObject::createWasmEnvironment(JSContext* cx,
-                                         Handle<ModuleObject*> self,
-                                         Handle<ExportNameVector> exportNames) {
+                                         Handle<ModuleObject*> self) {
   Rooted<ModuleEnvironmentObject*> env(
-      cx, ModuleEnvironmentObject::createForWasmModule(cx, self, exportNames));
+      cx, ModuleEnvironmentObject::createForWasmModule(cx, self));
   if (!env) {
     return false;
   }
-
-  // The export bindings are immutable and remain uninitialized until the
-  // module is executed, so that reading one before then is a reference error.
-  for (uint32_t slot = env->firstSyntheticValueSlot(); slot < env->slotSpan();
-       slot++) {
-    env->setAliasedBinding(slot, MagicValue(JS_UNINITIALIZED_LEXICAL));
-  }
-
   self->setInitialEnvironment(env);
   return true;
 }

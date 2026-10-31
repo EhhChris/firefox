@@ -744,8 +744,7 @@ class ModuleEnvironmentObject : public DisposableEnvironmentObject {
   static ModuleEnvironmentObject* createSynthetic(JSContext* cx,
                                                   Handle<ModuleObject*> module);
   static ModuleEnvironmentObject* createForWasmModule(
-      JSContext* cx, Handle<ModuleObject*> module,
-      Handle<ExportNameVector> exportNames);
+      JSContext* cx, Handle<ModuleObject*> module);
 
   ModuleObject& module() const;
   IndirectBindingMap& importBindings() const;

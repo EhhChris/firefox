@@ -71,9 +71,10 @@ nsIGlobalObject* ModuleLoadRequest::GetGlobalObject() {
   return mLoader->GetGlobalObject();
 }
 
-bool ModuleLoadRequest::IsSourcePhaseRequest() const {
+bool ModuleLoadRequest::IsSourcePhaseRequest(JSContext* aCx) const {
+  Rooted<JSObject*> moduleRequest(aCx, mModuleRequestObj);
   // moduleRequest can be null if ClearImport() has been called.
-  return mModuleRequestObj && JS::ModuleRequestIsSourcePhase(mModuleRequestObj);
+  return moduleRequest && JS::ModuleRequestIsSourcePhase(aCx, moduleRequest);
 }
 
 bool ModuleLoadRequest::IsErrored() const {

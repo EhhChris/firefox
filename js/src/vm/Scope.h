@@ -1789,10 +1789,6 @@ SharedShape* CreateEnvironmentShapeForSyntheticModule(
     JSContext* cx, const JSClass* cls, uint32_t numSlots,
     Handle<ModuleObject*> module);
 
-SharedShape* CreateEnvironmentShapeForWasmModule(
-    JSContext* cx, const JSClass* cls, uint32_t numSlots,
-    Handle<ExportNameVector> exportNames);
-
 SharedShape* EmptyEnvironmentShape(JSContext* cx, const JSClass* cls,
                                    uint32_t numSlots, ObjectFlags objectFlags);
 

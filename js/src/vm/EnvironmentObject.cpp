@@ -499,11 +499,17 @@ ModuleEnvironmentObject* ModuleEnvironmentObject::createSynthetic(
 
 /* static */
 ModuleEnvironmentObject* ModuleEnvironmentObject::createForWasmModule(
-    JSContext* cx, Handle<ModuleObject*> module,
-    Handle<ExportNameVector> exportNames) {
+    JSContext* cx, Handle<ModuleObject*> module) {
+  // Wasm source-phase modules have no JavaScript bindings, so the environment
+  // has no property slots.
+  Rooted<SharedPropMap*> map(cx);
+  uint32_t mapLength = 0;
+  uint32_t numSlots = JSSLOT_FREE(&class_);
+  uint32_t numFixed = gc::GetGCKindSlots(gc::GetGCObjectKind(numSlots));
   Rooted<SharedShape*> shape(
-      cx, CreateEnvironmentShapeForWasmModule(cx, &class_, JSSLOT_FREE(&class_),
-                                              exportNames));
+      cx, SharedShape::getInitialOrPropMapShape(cx, &class_, cx->realm(),
+                                                TaggedProto(nullptr), numFixed,
+                                                map, mapLength, OBJECT_FLAGS));
   if (!shape) {
     return nullptr;
   }
