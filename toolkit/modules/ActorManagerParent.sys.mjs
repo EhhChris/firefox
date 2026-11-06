@@ -524,6 +524,18 @@ let JSWINDOWACTORS = {
     allFrames: true,
   },
 
+  DenBrowserClipboard: {
+    parent: {
+      esModuleURI: "resource://gre/actors/DenBrowserClipboardParent.sys.mjs",
+    },
+    child: {
+      esModuleURI: "resource://gre/actors/DenBrowserClipboardChild.sys.mjs",
+      events: {
+        DenBrowserCopyBlocked: { capture: true },
+      },
+    },
+    allFrames: true,
+  },
   Printing: {
     parent: {
       esModuleURI: "resource://gre/actors/PrintingParent.sys.mjs",
