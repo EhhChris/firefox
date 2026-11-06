@@ -50,6 +50,11 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
         "nsWinRemoteServer.cpp",
         "WinRemoteMessage.cpp",
     ]
+    # DenBrowser: WinRemoteMessage.cpp checks forwarded command lines with the
+    # launcher's grammar (DenBrowserLaunchPolicy.h).
+    LOCAL_INCLUDES += [
+        "/browser/app/winlauncher",
+    ]
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
     SOURCES += [
         "nsMacRemoteClient.mm",
