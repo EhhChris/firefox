@@ -59,12 +59,8 @@ ChromeUtils.defineLazyGetter(lazy, "ensureMPUnlocked", () => {
     .Utils.ensureMPUnlocked;
 });
 
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "FXA_ENABLED",
-  "identity.fxaccounts.enabled",
-  true
-);
+// DenBrowser: FxA permanently disabled; no pref can re-enable it.
+lazy.FXA_ENABLED = false;
 
 export const ERROR_INVALID_ACCOUNT_STATE = "ERROR_INVALID_ACCOUNT_STATE";
 
