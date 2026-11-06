@@ -47,7 +47,6 @@ UNIFIED_SOURCES += [
     "nsCocoaUtils.mm",
     "nsCocoaWindow.mm",
     "nsColorPicker.mm",
-    "nsDeviceContextSpecX.mm",
     "nsFilePicker.mm",
     "nsLookAndFeel.mm",
     "nsMacDockSupport.mm",
@@ -62,9 +61,6 @@ UNIFIED_SOURCES += [
     "nsMenuItemX.mm",
     "nsMenuUtilsX.mm",
     "nsMenuX.mm",
-    "nsPrintDialogX.mm",
-    "nsPrintSettingsServiceX.mm",
-    "nsPrintSettingsX.mm",
     "nsSound.mm",
     "nsStandaloneNativeMenu.mm",
     "nsSystemStatusBarCocoa.mm",
@@ -82,6 +78,14 @@ UNIFIED_SOURCES += [
     "VibrancyManager.mm",
     "ViewRegion.mm",
 ]
+
+if CONFIG["NS_PRINTING"]:
+    UNIFIED_SOURCES += [
+        "nsDeviceContextSpecX.mm",
+        "nsPrintDialogX.mm",
+        "nsPrintSettingsServiceX.mm",
+        "nsPrintSettingsX.mm",
+    ]
 
 # These files cannot be built in unified mode because they cause symbol conflicts
 SOURCES += [

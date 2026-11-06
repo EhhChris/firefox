@@ -606,6 +606,21 @@ XPCOMUtils.defineLazyPreferenceGetter(
   }
 );
 
+window.notifyDenBrowserPrintingBlocked = function (aBrowsingContext = null) {
+  let browser =
+    aBrowsingContext?.top?.embedderElement || gBrowser.selectedBrowser;
+  if (browser?.localName != "browser") {
+    return;
+  }
+
+  let chromeWindow = browser.documentGlobal;
+  browser.dispatchEvent(
+    new chromeWindow.CustomEvent("DenBrowserPrintingBlocked", {
+      bubbles: true,
+    })
+  );
+};
+
 customElements.setElementCreationCallback("screenshots-buttons", () => {
   Services.scriptloader.loadSubScript(
     "chrome://browser/content/screenshots/screenshots-buttons.js",
@@ -836,17 +851,15 @@ function UpdateBackForwardCommands(aWebNavigation) {
   }
 }
 
-function updatePrintCommands(enabled) {
+function updatePrintCommands() {
   var printCommand = document.getElementById("cmd_print");
   var printPreviewCommand = document.getElementById("cmd_printPreviewToggle");
 
-  if (enabled) {
-    printCommand.removeAttribute("disabled");
-    printPreviewCommand.removeAttribute("disabled");
-  } else {
-    printCommand.setAttribute("disabled", "true");
-    printPreviewCommand.setAttribute("disabled", "true");
-  }
+  // DenBrowser keeps the command dispatchers active so Ctrl+P and any visible
+  // command-bound UI reach the lightweight blocked-action notifier. Source and
+  // compile-time guards still prevent all printing work.
+  printCommand.removeAttribute("disabled");
+  printPreviewCommand.removeAttribute("disabled");
 }
 
 /**
@@ -1286,7 +1299,7 @@ function HandleAppCommandEvent(evt) {
       BrowserCommands.openFileWindow();
       break;
     case "Print":
-      PrintUtils.startPrintWindow(gBrowser.selectedBrowser.browsingContext);
+      window.notifyDenBrowserPrintingBlocked();
       break;
     case "Save":
       saveBrowser(gBrowser.selectedBrowser);
@@ -1869,7 +1882,13 @@ let gFileMenu = {
         document.getElementById("menu_savePage")
       );
     }
-    PrintUtils.updatePrintSetupMenuHiddenState();
+    // Production DenBrowser builds compile the printing component (including
+    // printUtils.js) out. Keep the already-disabled Page Setup entry hidden
+    // without attempting to lazy-load that absent script.
+    let printSetupMenuItem = document.getElementById("menu_printSetup");
+    if (printSetupMenuItem) {
+      printSetupMenuItem.hidden = true;
+    }
 
     const aiWindowMenu = event.target.querySelector("#menu_newAIWindow");
     const classicWindowMenu = event.target.querySelector(
@@ -4239,6 +4258,14 @@ class TabDialogBox {
     } = {},
     ...aParams
   ) {
+    if (aURL == "chrome://global/content/print.html") {
+      // DenBrowser: reject before _onFirstDialogOpen() can set
+      // tabDialogShowing, register modal progress listeners, or expose the
+      // overlay. This is the final front-end backstop for direct dialog opens.
+      window.notifyDenBrowserPrintingBlocked(this.browser.browsingContext);
+      return { closedPromise: Promise.resolve(), dialog: null };
+    }
+
     let resolveClosed;
     let closedPromise = new Promise(resolve => (resolveClosed = resolve));
     // Get the dialog manager to open the prompt with.

@@ -329,8 +329,13 @@ nsresult nsPrintJob::CommonPrint(bool aIsPrintPreview,
   // (on nsDocumentViewer) might be cleared during this function (if we cause
   // script to run and it cancels the print operation).
 
-  nsresult rv = DoCommonPrint(aIsPrintPreview, aPrintSettings,
-                              aWebProgressListener, aSourceDoc);
+  // DenBrowser: final source-level backstop. Front-end and canonical-context
+  // guards normally abort before a print job or listener is created.
+  (void)aPrintSettings;
+  (void)aSourceDoc;
+  nsCOMPtr<nsIWebProgressListener> progressListener = aWebProgressListener;
+  RefPtr<RemotePrintJobChild> remotePrintJob = mRemotePrintJob;
+  nsresult rv = NS_ERROR_ABORT;
   if (NS_FAILED(rv)) {
     if (aIsPrintPreview) {
       mIsCreatingPrintPreview = false;
@@ -342,6 +347,20 @@ nsresult nsPrintJob::CommonPrint(bool aIsPrintPreview,
       FirePrintingErrorEvent(rv);
     }
     DestroyPrintingData();
+
+    // Settle any direct callers that reached this last line of defense.
+    if (progressListener) {
+      progressListener->OnStatusChange(nullptr, nullptr, rv, nullptr);
+      progressListener->OnStateChange(
+          nullptr, nullptr,
+          nsIWebProgressListener::STATE_STOP |
+              nsIWebProgressListener::STATE_IS_DOCUMENT,
+          rv);
+    }
+    if (remotePrintJob && remotePrintJob->CanSend()) {
+      (void)remotePrintJob->SendStatusChange(rv);
+      (void)remotePrintJob->SendAbortPrint(rv);
+    }
   }
 
   return rv;

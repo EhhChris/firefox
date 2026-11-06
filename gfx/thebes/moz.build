@@ -85,16 +85,12 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "android":
         "gfxFT2FontBase.h",
         "gfxFT2Fonts.h",
     ]
-    EXPORTS.mozilla.gfx += [
-        "PrintTargetPDF.h",
-    ]
     SOURCES += [
         "gfxAndroidPlatform.cpp",
         "gfxFT2FontBase.cpp",
         "gfxFT2FontList.cpp",
         "gfxFT2Fonts.cpp",
         "gfxFT2Utils.cpp",
-        "PrintTargetPDF.cpp",
     ]
     UNIFIED_SOURCES += [
         "AndroidSystemFontIterator.cpp",
@@ -115,27 +111,16 @@ elif CONFIG["MOZ_WIDGET_TOOLKIT"] in ("cocoa", "uikit"):
         "gfxQuartzNativeDrawing.cpp",
         "gfxQuartzSurface.cpp",
     ]
-    if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
-        EXPORTS.mozilla.gfx += [
-            "PrintTargetCG.h",
-        ]
-        SOURCES += [
-            "PrintTargetCG.mm",
-        ]
 elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
     EXPORTS += [
         "gfxFT2FontBase.h",
         "gfxPlatformGtk.h",
-    ]
-    EXPORTS.mozilla.gfx += [
-        "PrintTargetPDF.h",
     ]
     SOURCES += [
         "gfxFcPlatformFontList.cpp",
         "gfxFT2FontBase.cpp",
         "gfxFT2Utils.cpp",
         "gfxPlatformGtk.cpp",
-        "PrintTargetPDF.cpp",
     ]
 
     if CONFIG["MOZ_X11"]:
@@ -158,10 +143,6 @@ elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
         "gfxWindowsPlatform.h",
         "gfxWindowsSurface.h",
     ]
-    EXPORTS.mozilla.gfx += [
-        "PrintTargetPDF.h",
-        "PrintTargetWindows.h",
-    ]
     SOURCES += [
         "DisplayConfigWindows.cpp",
         "gfxDWriteCommon.cpp",
@@ -169,12 +150,22 @@ elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
         "gfxWindowsNativeDrawing.cpp",
         "gfxWindowsPlatform.cpp",
         "gfxWindowsSurface.cpp",
-        "PrintTargetPDF.cpp",
-        "PrintTargetWindows.cpp",
     ]
     UNIFIED_SOURCES += [
         "gfxDWriteFontList.cpp",
     ]
+
+if CONFIG["NS_PRINTING"]:
+    if CONFIG["MOZ_WIDGET_TOOLKIT"] in ("android", "gtk", "windows"):
+        EXPORTS.mozilla.gfx += ["PrintTargetPDF.h"]
+        SOURCES += ["PrintTargetPDF.cpp"]
+    elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
+        EXPORTS.mozilla.gfx += ["PrintTargetCG.h"]
+        SOURCES += ["PrintTargetCG.mm"]
+
+    if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
+        EXPORTS.mozilla.gfx += ["PrintTargetWindows.h"]
+        SOURCES += ["PrintTargetWindows.cpp"]
 
 # Are we targeting x86 or x64?  If so, build gfxAlphaRecoverySSE2.cpp.
 if CONFIG["INTEL_ARCHITECTURE"]:

@@ -15,10 +15,13 @@ const INPUT_DELAY_MS = Cu.isInAutomation ? 100 : 500;
 const MM_PER_POINT = 25.4 / 72;
 const INCHES_PER_POINT = 1 / 72;
 const INCHES_PER_MM = 1 / 25.4;
+const DENBROWSER_PRINT_DIALOG_DISABLED = true;
 const ourBrowser = window.docShell.chromeEventHandler;
-const PSSVC = Cc["@mozilla.org/gfx/printsettings-service;1"].getService(
-  Ci.nsIPrintSettingsService
-);
+const PSSVC = DENBROWSER_PRINT_DIALOG_DISABLED
+  ? null
+  : Cc["@mozilla.org/gfx/printsettings-service;1"].getService(
+      Ci.nsIPrintSettingsService
+    );
 
 var logger = (function () {
   const getMaxLogLevel = () =>
@@ -163,6 +166,19 @@ var PrintEventHandler = {
   _noPreviewUpdateSettings: new Set(["numCopies", "printDuplex"]),
 
   async init() {
+    if (DENBROWSER_PRINT_DIALOG_DISABLED) {
+      // Last-resort protection for callers that open print.html directly.
+      // Wait until SubDialog has installed its managed close implementation.
+      this.printPreviewEl =
+        ourBrowser.parentElement.querySelector("print-preview");
+      await ourBrowser._dialogReady;
+      PrintUtils._notifyPrintingBlocked(
+        this.printPreviewEl?.getSourceBrowsingContext()
+      );
+      window.close();
+      return;
+    }
+
     Glean.printing.previewOpenedTm.add(1);
 
     this.printPreviewEl =
