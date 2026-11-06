@@ -55,6 +55,8 @@ ChromeUtils.defineESModuleGetters(this, {
   PromptUtils: "resource://gre/modules/PromptUtils.sys.mjs",
 });
 
+const DENBROWSER_PRINTING_DISABLED = true;
+
 var PrintUtils = {
   SAVE_TO_PDF_PRINTER: "Mozilla Save to PDF",
 
@@ -97,6 +99,11 @@ var PrintUtils = {
    * @return true on success, false on failure
    */
   showPageSetup() {
+    if (DENBROWSER_PRINTING_DISABLED) {
+      this._notifyPrintingBlocked();
+      return false;
+    }
+
     let printSettings = this.getPrintSettings();
     // If we come directly from the Page Setup menu, the hack in
     // _enterPrintPreview will not have been invoked to set the last used
@@ -133,6 +140,22 @@ var PrintUtils = {
     return gBrowser.getTabDialogBox(sourceBrowser);
   },
 
+  _notifyPrintingBlocked(aBrowsingContext = null) {
+    let browser =
+      aBrowsingContext?.top?.embedderElement ||
+      globalThis.gBrowser?.selectedBrowser;
+    if (browser?.localName != "browser") {
+      return;
+    }
+
+    let chromeWindow = browser.documentGlobal;
+    browser.dispatchEvent(
+      new chromeWindow.CustomEvent("DenBrowserPrintingBlocked", {
+        bubbles: true,
+      })
+    );
+  },
+
   getPreviewBrowser(sourceBrowser) {
     let dialogBox = this.getTabDialogBox(sourceBrowser);
     for (let dialog of dialogBox.getTabDialogManager()._dialogs) {
@@ -165,6 +188,13 @@ var PrintUtils = {
     aPrintSelectionOnly,
     aPrintFrameOnly
   ) {
+    if (DENBROWSER_PRINTING_DISABLED) {
+      // Also cover direct callers of this private helper before TabDialogBox
+      // marks the tab as modal or exposes a dialog overlay.
+      this._notifyPrintingBlocked(aBrowsingContext);
+      return null;
+    }
+
     let sourceBrowser = aBrowsingContext.top.embedderElement;
     let previewBrowser = this.getPreviewBrowser(sourceBrowser);
     if (previewBrowser) {
@@ -188,6 +218,9 @@ var PrintUtils = {
       { features: "resizable=no", sizeTo: "available" },
       args
     );
+    if (!dialog) {
+      return null;
+    }
     closedPromise.catch(e => {
       console.error(e);
     });
@@ -228,6 +261,12 @@ var PrintUtils = {
    *        {printFrameOnly}      Whether to print the selected frame.
    */
   startPrintWindow(aBrowsingContext, aOptions) {
+    if (DENBROWSER_PRINTING_DISABLED) {
+      // Stop before option handling can create a tab-modal dialog or clone.
+      this._notifyPrintingBlocked(aBrowsingContext);
+      return null;
+    }
+
     // At most, one of these is set.
     let { printSelectionOnly, printFrameOnly, windowDotPrintOpenWindowInfo } =
       aOptions || {};
@@ -540,6 +579,11 @@ var PrintUtils = {
   // Show the system print dialog, saving modified preferences.
   // Returns true if the user clicked print (Not cancel).
   async handleSystemPrintDialog(aWindow, aHasSelection, aSettings) {
+    if (DENBROWSER_PRINTING_DISABLED) {
+      this._notifyPrintingBlocked();
+      return false;
+    }
+
     // Prompt the user to choose a printer and make any desired print
     // settings changes.
     try {
