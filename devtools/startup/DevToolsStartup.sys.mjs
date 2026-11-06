@@ -25,8 +25,6 @@ const kDebuggerPrefs = [
   "devtools.chrome.enabled",
 ];
 
-const DEVTOOLS_POLICY_DISABLED_PREF = "devtools.policy.disabled";
-
 import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 const lazy = {};
@@ -353,7 +351,7 @@ export class DevToolsStartup {
   profilerRecordingButtonCreated = false;
 
   isDisabledByPolicy() {
-    return Services.prefs.getBoolPref(DEVTOOLS_POLICY_DISABLED_PREF, false);
+    return true; // DenBrowser: developer tools permanently disabled.
   }
 
   handle(cmdLine) {
@@ -383,8 +381,10 @@ export class DevToolsStartup {
       // Add DevTools menu items so they can be picked up by the customize
       // keyboard shortcuts UI.
       Services.obs.addObserver(() => {
-        // Initialize DevTools to create all menuitems in the system menu.
-        this.initDevTools("CustomKeysUI");
+        if (!this.isDisabledByPolicy()) {
+          // Initialize DevTools to create all menuitems in the system menu.
+          this.initDevTools("CustomKeysUI");
+        }
       }, "customkeys-ui-showing");
       /* eslint-enable mozilla/balanced-observers */
 
@@ -566,10 +566,15 @@ export class DevToolsStartup {
    * @param {Window} window
    */
   onWindowReady(window) {
-    if (
-      this.isDisabledByPolicy() ||
-      AppConstants.MOZ_APP_NAME == "thunderbird"
-    ) {
+    if (AppConstants.MOZ_APP_NAME == "thunderbird") {
+      return;
+    }
+
+    if (this.isDisabledByPolicy()) {
+      // Keep only Firefox's exact stock shortcut definitions. onKey() turns
+      // them into lightweight blocked-action feedback without initializing the
+      // full DevTools loader/toolbox or adding menus/toolbars.
+      this.hookKeyShortcuts(window);
       return;
     }
 
@@ -706,6 +711,9 @@ export class DevToolsStartup {
   }
 
   onMoreToolsViewShowing(moreToolsView) {
+    if (this.isDisabledByPolicy()) {
+      return; // DenBrowser: developer tools permanently disabled.
+    }
     this.addDevToolsItemsToSubview(moreToolsView);
   }
 
@@ -912,6 +920,19 @@ export class DevToolsStartup {
 
   async onKey(window, key) {
     try {
+      if (this.isDisabledByPolicy()) {
+        const browser = window.gBrowser?.selectedBrowser;
+        if (browser?.localName == "browser") {
+          const chromeWindow = browser.documentGlobal;
+          browser.dispatchEvent(
+            new chromeWindow.CustomEvent("DenBrowserDevToolsBlocked", {
+              bubbles: true,
+            })
+          );
+        }
+        return;
+      }
+
       // The profiler doesn't care if DevTools is loaded, so provide a quick check
       // first to bail out of checking if DevTools is available.
       switch (key.id) {
@@ -979,6 +1000,12 @@ export class DevToolsStartup {
   }
 
   initDevTools(reason, key = "") {
+    if (this.isDisabledByPolicy()) {
+      // Non-notifying source-level backstop for internal callers that bypass
+      // the guarded keyboard, menu, observer, session, and command-line routes.
+      throw new Error("Developer tools are disabled by DenBrowser policy");
+    }
+
     // In the case of the --jsconsole and --jsdebugger command line parameters
     // there is no browser window yet so we don't send any telemetry yet.
     if (reason !== "CommandLine") {

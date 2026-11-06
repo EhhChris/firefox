@@ -21,8 +21,6 @@ ChromeUtils.defineLazyGetter(lazy, "Telemetry", function () {
   return Telemetry;
 });
 
-const DEVTOOLS_POLICY_DISABLED_PREF = "devtools.policy.disabled";
-
 function removeItem(array, callback) {
   const index = array.findIndex(callback);
   if (index >= 0) {
@@ -66,7 +64,7 @@ export const DevToolsShim = {
    * @returns {boolean}
    */
   isDisabledByPolicy() {
-    return Services.prefs.getBoolPref(DEVTOOLS_POLICY_DISABLED_PREF, false);
+    return true; // DenBrowser: developer tools permanently disabled.
   },
 
   /**
