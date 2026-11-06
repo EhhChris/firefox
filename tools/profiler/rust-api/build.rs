@@ -99,6 +99,10 @@ fn generate_bindings() {
         // not an opaque type, bindgen can't find its size properly and
         // MarkerSchema's total size reduces. That causes a heap buffer overflow.
         .opaque_type("std::vector.*")
+        // std::basic_string_view uses a _CharT template parameter that bindgen
+        // fails to translate with newer Clang/libc++ on macOS (std::__1:: inline
+        // namespace). The wildcard pattern matches both std:: and std::__1:: forms.
+        .opaque_type("std::.*basic_string_view.*")
         .raw_line("pub use self::root::*;")
         // Tell cargo to invalidate the built crate whenever any of the
         // included header files changed.
