@@ -1340,6 +1340,7 @@ static nsLiteralCString sImgSrcDataBlobAllowList[] = {
     "about:addons"_ns,
     "about:debugging"_ns,
     "about:deleteprofile"_ns,
+    "about:denbrowserhome"_ns,
     "about:devtools-toolbox"_ns,
     "about:editprofile"_ns,
     "about:firefoxview"_ns,
