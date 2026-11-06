@@ -6,6 +6,8 @@
 #define DenBrowserAttest_h__
 
 #include "nscore.h"
+#include "mozilla/Span.h"
+#include "nsStringFwd.h"
 
 class nsIInputStream;
 class nsIURI;
@@ -64,6 +66,30 @@ namespace denbrowser {
 nsresult AddAttestHeaders(mozilla::net::nsHttpRequestHead& aHead, nsIURI* aURI,
                           nsIInputStream* aUploadStream,
                           uint64_t aUploadLength);
+
+/**
+ * VerifyProxyPin — return false to abort a TLS handshake when the peer
+ * claims to be one of our attestation proxies but presents the wrong public
+ * key.
+ *
+ * Called from SSLServerCertVerification.cpp::AuthCertificateHook before any
+ * application data flows.  The pins live in the same build-time proxy table
+ * AddAttestHeaders() selects keys from, so each partner proxy is pinned to its
+ * own TLS cert.  Behaviour:
+ *
+ *   - If `aHost` is claimed by no proxy entry, returns true — this function
+ *     only constrains proxy hops, not other TLS connections.  An unconfigured
+ *     build (empty table) therefore passes everything, and dev builds work
+ *     normally.
+ *   - If the matching entry has no pin configured, returns true.
+ *   - Otherwise, decodes `aLeafCertDer`, computes sha256(SubjectPublicKeyInfo),
+ *     and returns true iff it matches that entry's pin.
+ *
+ * On any decode/hash failure with a configured pin, returns false
+ * (fail-closed: a broken cert isn't allowed to bypass the pin).
+ */
+bool VerifyProxyPin(const nsACString& aHost,
+                    mozilla::Span<const uint8_t> aLeafCertDer);
 
 }  // namespace denbrowser
 
