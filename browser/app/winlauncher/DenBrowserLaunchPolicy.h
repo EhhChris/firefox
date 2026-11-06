@@ -103,6 +103,8 @@ inline void UnwrapDenLinkArgument(int aArgc, wchar_t* aArgv[]) {
 // Nothing else is accepted, including the -os-restarted tag of Windows Restart
 // Manager relaunches: DenBrowser locks toolkit.winRegisterApplicationRestart
 // off, so it never registers one. The binary path in argv[0] is not inspected.
+// Patch 026 applies this same check to command lines forwarded to a running
+// browser, so any widening here widens that channel too.
 inline bool IsAllowedBrowserCommandLine(int aArgc,
                                         const wchar_t* const aArgv[]) {
   if (aArgc < 1 || !aArgv || !aArgv[0]) {

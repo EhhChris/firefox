@@ -4,12 +4,43 @@
 
 #include "nsCommandLine.h"
 #include "mozilla/CmdLineAndEnvUtils.h"
+#include "mozilla/Span.h"
 #include "mozilla/Try.h"
+#include "mozilla/Utf8.h"
+#include "DenBrowserLaunchPolicy.h"
 #include "WinRemoteMessage.h"
 
 using namespace mozilla;
 
 #define MOZ_MAGIC_COPYDATA_PREFIX "🔥🦊"
+
+// DenBrowser: any process running as this user can send WM_COPYDATA to the
+// remote window, so a forwarded command line must pass the launcher's grammar
+// (patch 015) instead of being trusted. A second, launcher-approved instance
+// forwards exactly that shape, with any den: link already unwrapped, so a
+// den: link is refused here. Arguments must be valid UTF-8.
+static bool IsAllowedDenBrowserRemoteArguments(
+    const nsTArray<const char*>& aArgv) {
+  // The grammar never has more than four arguments; skip converting a flood.
+  if (aArgv.Length() > 4) {
+    return false;
+  }
+
+  AutoTArray<nsString, 4> wideArgs;
+  for (const char* arg : aArgv) {
+    if (!IsUtf8(MakeStringSpan(arg))) {
+      return false;
+    }
+    wideArgs.AppendElement(NS_ConvertUTF8toUTF16(arg));
+  }
+
+  AutoTArray<const wchar_t*, 4> wideArgv;
+  for (const nsString& arg : wideArgs) {
+    wideArgv.AppendElement(static_cast<const wchar_t*>(arg.get()));
+  }
+  return denbrowser::IsAllowedBrowserCommandLine(
+      static_cast<int>(wideArgv.Length()), wideArgv.Elements());
+}
 
 WinRemoteMessageSender::WinRemoteMessageSender(int32_t aArgc,
                                                const char** aArgv,
@@ -61,8 +92,6 @@ nsresult WinRemoteMessageReceiver::ParseV2(const nsAString& aBuffer) {
 }
 
 nsresult WinRemoteMessageReceiver::ParseV3(const nsACString& aBuffer) {
-  nsCOMPtr<nsIFile> workingDir;
-
   // String should start with the magic sequence followed by null
   int32_t nextNul = aBuffer.FindChar('\0');
   if (nextNul < 0) {
@@ -79,9 +108,9 @@ nsresult WinRemoteMessageReceiver::ParseV3(const nsACString& aBuffer) {
     return NS_ERROR_FAILURE;
   }
 
-  nsresult rv = NS_NewUTF8LocalFile(Substring(aBuffer, pos, nextNul - pos),
-                                    getter_AddRefs(workingDir));
-  NS_ENSURE_SUCCESS(rv, rv);
+  // DenBrowser: the sender's working directory is skipped. The launch grammar
+  // never needs it, and resolving -url against it would make the browser open
+  // a path of the sender's choosing, such as a UNC share.
 
   pos = nextNul + 1;
   nsTArray<const char*> argv;
@@ -103,17 +132,21 @@ nsresult WinRemoteMessageReceiver::ParseV3(const nsACString& aBuffer) {
     return NS_ERROR_FAILURE;
   }
 
+  if (!IsAllowedDenBrowserRemoteArguments(argv)) {
+    return NS_ERROR_FAILURE;
+  }
+
   mCommandLine = new nsCommandLine();
-  return mCommandLine->Init(argv.Length(), argv.Elements(), workingDir,
+  return mCommandLine->Init(argv.Length(), argv.Elements(), nullptr,
                             nsICommandLine::STATE_REMOTE_AUTO);
 }
 
 nsresult WinRemoteMessageReceiver::Parse(const COPYDATASTRUCT* aMessageData) {
   switch (static_cast<WinRemoteMessageVersion>(aMessageData->dwData)) {
     case WinRemoteMessageVersion::CommandLineAndWorkingDirInUtf16:
-      return ParseV2(
-          nsDependentSubstring(reinterpret_cast<wchar_t*>(aMessageData->lpData),
-                               aMessageData->cbData / sizeof(char16_t)));
+      // DenBrowser: no DenBrowser build sends ESR 128's v2 format, and only
+      // v3 is checked against the launch grammar, so v2 is refused.
+      return NS_ERROR_FAILURE;
     case WinRemoteMessageVersion::NullSeparatedArguments:
       return ParseV3(nsDependentCSubstring(
           reinterpret_cast<char*>(aMessageData->lpData), aMessageData->cbData));
