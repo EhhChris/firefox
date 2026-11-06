@@ -1330,6 +1330,7 @@ denbrowser-saving-blocked-infobar = Saving files is not available in this browse
 denbrowser-printing-blocked-infobar = Printing is not available in this browser.
 denbrowser-copying-blocked-infobar = Copying is not available for this site.
 denbrowser-devtools-blocked-infobar = Developer tools are not available in this browser.
+denbrowser-bookmarklet-blocked-infobar = JavaScript bookmarks are not available in this browser.
 
 ## Mozilla data reporting notification (Telemetry, Firefox Health Report, etc)
 
