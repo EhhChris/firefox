@@ -32,6 +32,8 @@
 
 #include "DenBrowserAttest.h"
 
+#include "cert.h"
+#include "certt.h"
 #include "keyhi.h"
 #include "mozilla/Base64.h"
 #include "mozilla/Logging.h"
@@ -52,6 +54,7 @@
 #include "secasn1.h"
 #include "secitem.h"
 
+#include <cstring>
 #include <iterator>  // std::size
 
 namespace denbrowser {
@@ -515,6 +518,88 @@ nsresult AddAttestHeaders(mozilla::net::nsHttpRequestHead& aHead, nsIURI* aURI,
   (void)aHead.SetHeader("X-DenBrowser-Token"_ns, tokenB64, false);
 
   return NS_OK;
+}
+
+// ── Proxy SPKI pin verification ──────────────────────────────────────────────
+//
+// The browser refuses to complete a TLS handshake to a proxy's domain unless
+// the leaf cert's SubjectPublicKeyInfo sha256 matches the pin recorded for
+// that proxy in the build-time table above.  This shuts off the local-sniffer
+// threat: a co-resident attacker on this machine sees only TLS ciphertext
+// between the browser and a proxy, and can't impersonate one with a different
+// cert (no rogue CA install, no MitM stack, etc.).
+//
+// Each partner proxy carries its own pin, so rotating one partner's TLS cert
+// does not disturb the others — but it does still require a DenBrowser rebuild
+// (see the patch header).
+
+// Returns NS_OK and writes 32 bytes of sha256(SubjectPublicKeyInfo) into
+// aOut, given the DER bytes of an X.509 certificate.
+static nsresult Sha256OfLeafSpki(mozilla::Span<const uint8_t> aCertDer,
+                                 uint8_t aOut[32]) {
+  if (aCertDer.IsEmpty()) return NS_ERROR_INVALID_ARG;
+
+  SECItem certItem = {siBuffer,
+                      const_cast<uint8_t*>(aCertDer.Elements()),
+                      static_cast<unsigned int>(aCertDer.Length())};
+  // CERT_NewTempCertificate, not CERT_DecodeDERCertificate: the latter is not
+  // exported from nss3.dll (absent from security/nss/lib/nss/nss.def), so
+  // referencing it fails to link into xul.  This is the same call PSM itself
+  // uses to parse a peer cert (see NSSSocketControl.cpp).  copyDER=true so the
+  // cert owns its bytes and does not alias aCertDer.
+  mozilla::UniqueCERTCertificate cert(CERT_NewTempCertificate(
+      CERT_GetDefaultCertDB(), &certItem, nullptr, false, true));
+  if (!cert) return NS_ERROR_FAILURE;
+
+  // Re-encode the parsed SubjectPublicKeyInfo to be sure we hash the full
+  // SPKI (algorithm identifier + BIT STRING) per RFC 7469, not just the
+  // raw public-key octets.
+  SECItem* spkiDer = SEC_ASN1EncodeItem(
+      nullptr, nullptr, &cert->subjectPublicKeyInfo,
+      SEC_ASN1_GET(CERT_SubjectPublicKeyInfoTemplate));
+  if (!spkiDer) return NS_ERROR_FAILURE;
+
+  SECStatus rv =
+      PK11_HashBuf(SEC_OID_SHA256, aOut, spkiDer->data, spkiDer->len);
+  SECITEM_FreeItem(spkiDer, PR_TRUE);
+  return (rv == SECSuccess) ? NS_OK : NS_ERROR_FAILURE;
+}
+
+bool VerifyProxyPin(const nsACString& aHost,
+                    mozilla::Span<const uint8_t> aLeafCertDer) {
+  // Not one of our proxies' domains (or an unconfigured build) → the pin is
+  // inert and this host is none of our business.
+  int32_t proxyIndex = FindProxyForHost(aHost);
+  if (proxyIndex < 0) return true;
+
+  const DenProxyEntry& entry = kDenProxies[proxyIndex];
+  if (!entry.mSpkiPin) {
+    // Proxy configured without a pin: attestation still applies, but this hop
+    // is not bound to a specific server cert.
+    MOZ_LOG(sLog, mozilla::LogLevel::Warning,
+            ("DenBrowserAttest: proxy \"%s\" has no TLS pin configured — "
+             "host=%s is not pin-checked.",
+             entry.mName, nsPromiseFlatCString(aHost).get()));
+    return true;
+  }
+
+  uint8_t hash[32];
+  if (NS_FAILED(Sha256OfLeafSpki(aLeafCertDer, hash))) {
+    MOZ_LOG(sLog, mozilla::LogLevel::Error,
+            ("DenBrowserAttest: SPKI hashing failed for host=%s (proxy "
+             "\"%s\") — pin REJECT.",
+             nsPromiseFlatCString(aHost).get(), entry.mName));
+    return false;  // fail-closed
+  }
+
+  if (std::memcmp(hash, entry.mSpkiPin, sizeof(hash)) != 0) {
+    MOZ_LOG(sLog, mozilla::LogLevel::Error,
+            ("DenBrowserAttest: SPKI pin MISMATCH for host=%s (proxy \"%s\") "
+             "— aborting TLS.",
+             nsPromiseFlatCString(aHost).get(), entry.mName));
+    return false;
+  }
+  return true;
 }
 
 }  // namespace denbrowser
